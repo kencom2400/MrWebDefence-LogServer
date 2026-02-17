@@ -656,8 +656,11 @@ class LogBuffer:
             self.buffer.extend(log_entries)
             
             # 自動フラッシュ条件チェック
-            if self._should_flush():
-                await self.flush()
+            should_flush = self._should_flush()
+        
+        # ロックの外でflushを呼び出す（デッドロック防止）
+        if should_flush:
+            await self.flush()
     
     def _is_buffer_full(self, additional_entries: int = 0) -> bool:
         """
@@ -805,6 +808,36 @@ class FileStorage:
     def __init__(self, base_path: str = "logs") -> None:
         self.base_path = Path(base_path)
     
+    def _sanitize_path_component(self, component: str) -> str:
+        """
+        パスコンポーネントをサニタイズ（Path Traversal対策）
+        
+        - パストラバーサル文字（../、..\\）を除去
+        - 特殊文字を安全な文字に置換
+        - 空文字列の場合は'unknown'を返す
+        
+        Args:
+            component: パスコンポーネント（customer_name、log_type、fqdn等）
+            
+        Returns:
+            サニタイズされたパスコンポーネント
+        """
+        if not component or not isinstance(component, str):
+            return 'unknown'
+        
+        # パストラバーサル文字を除去
+        component = component.replace('..', '').replace('/', '').replace('\\', '')
+        
+        # 特殊文字を置換（英数字、ハイフン、アンダースコア、ドット以外）
+        import re
+        component = re.sub(r'[^a-zA-Z0-9._-]', '_', component)
+        
+        # 先頭・末尾のドットを除去（隠しファイル防止）
+        component = component.strip('.')
+        
+        # 空文字列の場合はunknownを返す
+        return component if component else 'unknown'
+    
     def _get_log_file_path(self, log_entry: LogEntry) -> Path:
         """
         ログファイルのパスを生成
@@ -814,13 +847,17 @@ class FileStorage:
         
         例:
         logs/customer-a/nginx/example.com/2026/02/17/13.log
+        
+        セキュリティ: パストラバーサル攻撃を防ぐため、
+                    すべてのパスコンポーネントをサニタイズ
         """
         ts = log_entry.timestamp
         metadata = log_entry.metadata
         
-        customer_name = metadata.get('customer_name', 'default')
-        log_type = metadata.get('log_type', 'unknown')
-        fqdn = metadata.get('fqdn', 'unknown')
+        # パスコンポーネントをサニタイズ（Path Traversal対策）
+        customer_name = self._sanitize_path_component(metadata.get('customer_name', 'default'))
+        log_type = self._sanitize_path_component(metadata.get('log_type', 'unknown'))
+        fqdn = self._sanitize_path_component(metadata.get('fqdn', 'unknown'))
         
         return (
             self.base_path 
