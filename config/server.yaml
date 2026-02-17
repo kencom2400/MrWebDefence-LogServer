@@ -1,0 +1,25 @@
+server:
+  host: 0.0.0.0
+  http_port: 8080
+  tcp_port: 5140
+  workers: 4
+
+buffer:
+  max_size: 1000
+  max_age_seconds: 30
+  max_memory_mb: 10
+
+storage:
+  type: file
+  base_path: logs
+  rotation:
+    by_hour: true
+    max_file_size_mb: 100
+
+time_correction:
+  max_future_offset_minutes: 5
+  old_log_warning_days: 7
+
+logging:
+  level: info
+  format: json
