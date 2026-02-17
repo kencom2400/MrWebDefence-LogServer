@@ -315,16 +315,28 @@ async def receive_logs(logs: Union[EngineLog, List[EngineLog]]):
         # パース・正規化・補正
         processed_logs = []
         for log in logs:
-            # Engine側のログをパース
-            parsed = parser.parse(log.dict())
-            
-            # 正規化
-            log_entry = normalizer.normalize(parsed)
-            
-            # タイムスタンプ補正
-            log_entry = time_corrector.correct(log_entry)
-            
-            processed_logs.append(log_entry)
+            try:
+                # Engine側のログをパース
+                parsed = parser.parse(log.dict())
+                
+                # 正規化
+                log_entry = normalizer.normalize(parsed)
+                
+                # タイムスタンプ補正
+                log_entry = time_corrector.correct(log_entry)
+                
+                processed_logs.append(log_entry)
+            except ValueError as e:
+                # 個別ログのパースエラーはログに記録して続行
+                logger.warning(f"Failed to parse log: {e}, log: {log.dict()}")
+                continue
+        
+        # すべてのログがパース失敗した場合
+        if not processed_logs:
+            raise HTTPException(
+                status_code=400,
+                detail="All logs failed to parse"
+            )
         
         # バッファに追加（非同期、即座にリターン）
         await log_buffer.add_batch(processed_logs)
@@ -336,12 +348,18 @@ async def receive_logs(logs: Union[EngineLog, List[EngineLog]]):
         }
     except BufferFullError as e:
         # バッファ満杯の場合は503を返す（バックプレッシャー）
+        logger.warning(f"Buffer full: {e}")
         raise HTTPException(
             status_code=503,
             detail=f"Buffer is full, please retry later: {str(e)}"
         )
+    except HTTPException:
+        # HTTPExceptionはそのまま再送出
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # 予期しないエラーはログに記録
+        logger.error(f"Unexpected error in receive_logs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/health")
 async def health_check():
@@ -373,6 +391,10 @@ class LogParser:
     # 必須フィールド
     REQUIRED_FIELDS = ['time', 'log_type', 'hostname', 'fqdn']
     
+    # フィールド値の最大長（DoS攻撃対策）
+    MAX_FIELD_LENGTH = 1024
+    MAX_MESSAGE_LENGTH = 10240  # 10KB
+    
     def parse(self, engine_log: dict) -> dict:
         """
         Engine側のログを検証・パース
@@ -384,12 +406,25 @@ class LogParser:
             検証済みログ辞書
             
         Raises:
-            ValueError: 必須フィールドが欠けている場合
+            ValueError: 必須フィールドが欠けている、または不正な値の場合
         """
         # 必須フィールドの確認
         for field in self.REQUIRED_FIELDS:
             if field not in engine_log or engine_log[field] is None:
                 raise ValueError(f"Missing required field: {field}")
+        
+        # フィールド値の型と長さの検証（セキュリティ対策）
+        for field in self.REQUIRED_FIELDS:
+            value = engine_log[field]
+            if not isinstance(value, str):
+                raise ValueError(f"Field {field} must be a string, got {type(value)}")
+            if len(value) > self.MAX_FIELD_LENGTH:
+                raise ValueError(f"Field {field} exceeds maximum length of {self.MAX_FIELD_LENGTH}")
+        
+        # メッセージフィールドの長さ検証（存在する場合）
+        if 'message' in engine_log and isinstance(engine_log['message'], str):
+            if len(engine_log['message']) > self.MAX_MESSAGE_LENGTH:
+                raise ValueError(f"Message exceeds maximum length of {self.MAX_MESSAGE_LENGTH}")
         
         return engine_log
 ```
@@ -646,9 +681,31 @@ class LogBuffer:
         return False
     
     def _get_buffer_size_bytes(self) -> int:
-        """バッファのメモリサイズを概算（バイト）"""
-        # 簡易的な見積もり: 1エントリあたり平均1KB
-        return len(self.buffer) * 1024
+        """
+        バッファのメモリサイズを概算（バイト）
+        
+        より正確な見積もりのため、各エントリのJSONサイズを計算
+        """
+        if not self.buffer:
+            return 0
+        
+        # サンプルベースの見積もり（パフォーマンスとのバランス）
+        # 最初の10エントリの平均サイズから全体を推定
+        sample_size = min(10, len(self.buffer))
+        total_sample_size = 0
+        
+        for entry in self.buffer[:sample_size]:
+            # JSON文字列のサイズを計算
+            try:
+                json_str = json.dumps(entry.to_dict(), ensure_ascii=False)
+                total_sample_size += len(json_str.encode('utf-8'))
+            except Exception:
+                # エラー時は安全側の見積もり（1エントリ=2KB）
+                total_sample_size += 2048
+        
+        # 平均サイズを計算して全体を推定
+        avg_size = total_sample_size / sample_size if sample_size > 0 else 2048
+        return int(avg_size * len(self.buffer))
     
     def _should_flush(self) -> bool:
         """フラッシュすべきか判定"""
@@ -1091,10 +1148,16 @@ httpx = "^0.26.0"  # テスト用HTTP クライアント
 
 ### セキュリティ
 
-- **認証**: APIキーベース（環境変数で管理、将来実装）
+- **入力検証**: 
+  - 必須フィールドの存在確認
+  - フィールド値の型チェック（文字列型の確認）
+  - フィールド値の長さ制限（DoS攻撃対策）
+    - 通常フィールド: 最大1KB
+    - メッセージフィールド: 最大10KB
+- **認証**: APIキーベースの認証（環境変数で管理、将来実装）
 - **暗号化**: TLS/SSL対応（オプション）
-- **入力検証**: すべての入力をバリデーション
 - **レート制限**: 過負荷防止（将来実装）
+- **エラー情報の制限**: 詳細なエラー情報を外部に漏らさない（Internal server errorとして返す）
 
 ### 運用性
 
