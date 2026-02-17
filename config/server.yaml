@@ -9,6 +9,7 @@ buffer:
   max_count: 1000           # バッファに保持する最大ログ数
   max_memory_mb: 50         # バッファの最大メモリサイズ（MB）
   flush_interval_sec: 10    # 定期的にフラッシュする間隔（秒）
+  max_retries: 3            # フラッシュ失敗時の最大リトライ回数
 
 storage:
   base_dir: "logs"          # ログファイルの保存ディレクトリ
@@ -16,8 +17,9 @@ storage:
   # 古いログのアーカイブ・削除は外部スクリプトで実施
 
 parser:
-  max_field_length: 1024    # フィールド値の最大長（バイト）
+  max_field_length: 1024    # 必須フィールド値の最大長（バイト）
   max_message_length: 10240 # メッセージの最大長（バイト）
+  max_optional_field_length: 2048  # 非必須フィールド値の最大長（バイト）
 
 corrector:
   future_tolerance_sec: 300 # 未来のログとして許容する時間（秒）

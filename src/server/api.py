@@ -6,24 +6,35 @@ from typing import List, Dict, Any
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel
+from src.config import get_config
 from src.parser import LogParser, LogNormalizer
 from src.corrector import TimeCorrector
 from src.buffer import LogBuffer
 from src.storage import FileStorage
 from src.models import ParseError, BufferFullError
 
+# 設定を読み込み
+config = get_config()
+
 # ロガー設定
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=getattr(logging, config.server_log_level.upper()),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# コンポーネント初期化
-parser = LogParser()
+# コンポーネント初期化（設定から値を取得）
+parser = LogParser(config=config)
 normalizer = LogNormalizer()
-corrector = TimeCorrector()
-storage = FileStorage(base_dir="logs")
-buffer = LogBuffer(max_count=1000, max_memory_mb=50, flush_interval_sec=10, storage=storage)
+corrector = TimeCorrector(config=config)
+storage = FileStorage(base_dir=config.storage_base_dir)
+buffer = LogBuffer(
+    max_count=config.buffer_max_count,
+    max_memory_mb=config.buffer_max_memory_mb,
+    flush_interval_sec=config.buffer_flush_interval_sec,
+    max_retries=config.buffer_max_retries,
+    storage=storage,
+)
 
 
 @asynccontextmanager

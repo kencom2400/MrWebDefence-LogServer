@@ -63,6 +63,9 @@ class FileStorage:
 
         Returns:
             ログファイルパス
+
+        Raises:
+            ValueError: パスがbase_dir外に出ようとした場合（Path Traversal対策）
         """
         metadata = log_entry.metadata
         timestamp = log_entry.timestamp
@@ -82,6 +85,16 @@ class FileStorage:
         file_path = (
             self.base_dir / customer_name / log_type / fqdn / year / month / day / f"{hour}.log"
         )
+
+        # セキュリティチェック: 生成されたパスがbase_dir内に収まっているか確認
+        try:
+            resolved_path = file_path.resolve()
+            resolved_base = self.base_dir.resolve()
+            if not str(resolved_path).startswith(str(resolved_base)):
+                raise ValueError(f"Path traversal detected: {file_path} is outside base directory")
+        except Exception as e:
+            logger.error(f"Path validation failed: {e}")
+            raise ValueError(f"Invalid log file path: {e}")
 
         return file_path
 
