@@ -443,6 +443,9 @@ Engine側のログをLogServerの内部データモデル（LogEntry）に変換
 #### 実装例
 
 ```python
+from datetime import datetime, timezone
+from dateutil import parser as date_parser
+
 class LogNormalizer:
     """Engine側のログをLogServerのデータモデルに正規化"""
     
@@ -535,6 +538,8 @@ class LogNormalizer:
 Engine側から送信されるタイムスタンプは既に正しい形式ですが、以下の補正を行います：
 
 ```python
+from datetime import datetime, timezone, timedelta
+
 class TimeCorrector:
     """タイムスタンプを補正する"""
     
@@ -616,6 +621,11 @@ stateDiagram-v2
 #### 実装例
 
 ```python
+import asyncio
+import json
+from datetime import datetime, timezone
+from typing import List
+
 class BufferFullError(Exception):
     """バッファが満杯の場合に発生する例外"""
     pass
@@ -707,7 +717,7 @@ class LogBuffer:
                 total_sample_size += 2048
         
         # 平均サイズを計算して全体を推定
-        avg_size = total_sample_size / sample_size if sample_size > 0 else 2048
+        avg_size = total_sample_size / sample_size  # sample_size > 0は確定（上でチェック済み）
         return int(avg_size * len(self.buffer))
     
     def _should_flush(self) -> bool:
@@ -1224,6 +1234,9 @@ storage:
   type: file
   base_path: logs
   # ディレクトリ構造: {customer_name}/{log_type}/{fqdn}/{year}/{month}/{day}/{hour}.log
+  # 注: 時間別（1時間ごと）にファイルが自動分割されるため、
+  #     追加のログローテーション設定は不要
+  #     古いログのアーカイブ・削除は外部スクリプトで実施
 
 time_correction:
   max_future_offset_minutes: 5    # 未来のタイムスタンプ許容範囲（分）
