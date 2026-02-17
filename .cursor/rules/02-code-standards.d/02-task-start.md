@@ -70,7 +70,97 @@ run_terminal_cmd({
 
 **🚨 CRITICAL: AIアシスタントへの指示**
 
-`@start-task`コマンドを受け取った際は、**必ず`required_permissions: ['all']`を指定して実行**してください。これは必須事項です。サンドボックス環境の制限により、ネットワーク接続やGit操作が失敗するため、最初からall権限で実行する必要があります。
+### Issueトラッカーの自動判定方法
+
+`@start-task`コマンドを受け取った際は、以下の順序でIssueトラッカーを判定してください：
+
+#### 推奨実装（if-elif-else）
+
+```bash
+# Jiraを優先、存在しない場合はGitHubを試行
+if [ -f "scripts/jira/workflow/start-task.sh" ]; then
+  # Jiraを使用
+  bash scripts/jira/workflow/start-task.sh
+elif [ -f "scripts/github/workflow/start-task.sh" ]; then
+  # GitHubを使用
+  bash scripts/github/workflow/start-task.sh
+else
+  echo "❌ エラー: start-task.shスクリプトが見つかりません"
+  exit 1
+fi
+```
+
+#### TypeScript実装例
+
+```typescript
+// ✅ 推奨: 自動判定
+const fs = require('fs');
+
+if (fs.existsSync('scripts/jira/workflow/start-task.sh')) {
+  // Jiraを使用
+  run_terminal_cmd({
+    command: 'bash scripts/jira/workflow/start-task.sh',
+    required_permissions: ['all'],
+  });
+} else if (fs.existsSync('scripts/github/workflow/start-task.sh')) {
+  // GitHubを使用
+  run_terminal_cmd({
+    command: 'bash scripts/github/workflow/start-task.sh',
+    required_permissions: ['all'],
+  });
+} else {
+  console.error('❌ エラー: start-task.shスクリプトが見つかりません');
+}
+```
+
+### 重要事項
+
+- ✅ **Jiraスクリプトが存在する場合は、常にJiraを優先**
+- ✅ **必ず`required_permissions: ['all']`を指定して実行**
+- ✅ サンドボックス環境の制限により、ネットワーク接続やGit操作が失敗するため、最初からall権限で実行する必要があります
+
+### Jiraプロジェクトキーの設定
+
+Jiraを使用する場合、以下の環境変数を設定する必要があります：
+
+```bash
+# プロジェクトキー（必須）
+export JIRA_PROJECT_KEY='MWD'  # または TEST_PROJECT_KEY
+
+# 認証情報（必須）
+export JIRA_EMAIL='your-email@example.com'
+export JIRA_API_TOKEN='your-api-token'
+
+# ベースURL（オプション、デフォルト: https://kencom2400.atlassian.net）
+export JIRA_BASE_URL='https://kencom2400.atlassian.net'
+```
+
+#### 設定方法
+
+1. **config.local.shファイルを作成**
+
+```bash
+cp scripts/jira/config.local.sh.example scripts/jira/config.local.sh
+```
+
+2. **config.local.shを編集して認証情報とプロジェクトキーを設定**
+
+```bash
+# scripts/jira/config.local.sh
+export JIRA_EMAIL='your-email@example.com'
+export JIRA_API_TOKEN='your-api-token'
+export JIRA_PROJECT_KEY='MWD'  # プロジェクトキーを設定
+```
+
+3. **設定ファイルを読み込み**
+
+```bash
+source scripts/jira/config.local.sh
+```
+
+#### プロジェクトキーが未設定の場合のエラー処理
+
+AIアシスタントは、プロジェクトキーが未設定の場合、**ユーザーに設定方法を案内してから終了**してください。自動的に推測して実行することは避けてください。
 
 ---
 
