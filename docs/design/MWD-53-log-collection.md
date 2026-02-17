@@ -2,19 +2,21 @@
 
 **Issue**: MWD-53  
 **作成日**: 2026-02-17  
-**ステータス**: In Progress
+**更新日**: 2026-02-17 (Engine側設計書を反映)  
+**ステータス**: Design Phase
 
 ---
 
 ## 📋 目次
 
 1. [概要](#概要)
-2. [システムアーキテクチャ](#システムアーキテクチャ)
-3. [ログ収集フロー](#ログ収集フロー)
-4. [コンポーネント設計](#コンポーネント設計)
-5. [データ構造](#データ構造)
-6. [実装計画](#実装計画)
-7. [テスト計画](#テスト計画)
+2. [参照設計書](#参照設計書)
+3. [システムアーキテクチャ](#システムアーキテクチャ)
+4. [ログ収集フロー](#ログ収集フロー)
+5. [コンポーネント設計](#コンポーネント設計)
+6. [データ構造](#データ構造)
+7. [実装計画](#実装計画)
+8. [テスト計画](#テスト計画)
 
 ---
 
@@ -22,23 +24,42 @@
 
 ### なぜやるか
 
-WAFエンジンから転送されるログを受信し、パース・正規化する機能が必要。
+WAFエンジン（MrWebDefence-Engine）から転送されるログを受信し、パース・正規化・保存する機能が必要。
 
 ### 何をやるか
 
-- Fluentd/Fluent Bit設定実装
-- ログ受信エンドポイント実装（HTTP、TCP）
-- ログパース・正規化ロジック実装
-- ログタイムスタンプ補正機能実装
-- ログバッファリング機能実装
+- **ログ受信エンドポイント実装**（HTTP）
+- **ログパース・正規化ロジック実装**
+- **ログタイムスタンプ補正機能実装**
+- **ログバッファリング機能実装**
+- **ストレージ実装**（初期: ファイルベース）
 
 ### 受け入れ条件
 
-- [ ] Fluentd/Fluent Bitが正常に動作する
 - [ ] ログ受信エンドポイントが正常に動作する
 - [ ] ログパース・正規化が正常に動作する
 - [ ] ログタイムスタンプ補正が正常に動作する
 - [ ] ログバッファリングが正常に動作する
+- [ ] ストレージへの保存が正常に動作する
+
+---
+
+## 参照設計書
+
+本設計は、MrWebDefence-Engineのログ転送設計と連携します：
+
+- **[MWD-40: Fluentd設定ファイルのモジュール化計画](https://github.com/kencom2400/MrWebDefence-Engine/blob/main/docs/design/MWD-40-fluentd-modularization-plan.md)**
+  - Engine側のFluentd設定構造
+  - label/includeを使ったモジュール化方針
+  
+- **[MWD-40: ログ転送機能実装 実装設計書](https://github.com/kencom2400/MrWebDefence-Engine/blob/main/docs/design/MWD-40-implementation-plan.md)**
+  - ログ形式、タグ設計
+  - メタデータ構造（customer_name、fqdn、year/month/day/hour等）
+  - 転送エンドポイント仕様
+  
+- **[MWD-40: ログ連携方法比較検討](https://github.com/kencom2400/MrWebDefence-Engine/blob/main/docs/design/MWD-40-log-integration-analysis.md)**
+  - 共有ボリューム方式 vs ログドライバ方式
+  - 推奨方式: 共有ボリューム方式（デフォルト）
 
 ---
 
@@ -48,19 +69,94 @@ WAFエンジンから転送されるログを受信し、パース・正規化�
 
 ```mermaid
 graph TB
-    WAF[WAF Engine] -->|ログ転送| FluentBit[Fluent Bit]
-    FluentBit -->|HTTP/TCP| LogServer[Log Server]
-    LogServer -->|パース・正規化| Parser[Log Parser]
-    Parser -->|タイムスタンプ補正| TimeCorrector[Time Corrector]
-    TimeCorrector -->|バッファリング| Buffer[Log Buffer]
-    Buffer -->|保存| Storage[Storage]
+    subgraph Engine["MrWebDefence-Engine"]
+        WAF[WAF Engine<br/>Nginx + OpenAppSec]
+        EngineFluentd[Fluentd]
+        WAF -->|ログファイル<br/>共有ボリューム| EngineFluentd
+    end
+    
+    subgraph LogServer["MrWebDefence-LogServer"]
+        Endpoint[Log Receiver<br/>FastAPI]
+        Parser[Log Parser]
+        Normalizer[Normalizer]
+        TimeCorrector[Time Corrector]
+        Buffer[Log Buffer]
+        Storage[File Storage]
+        
+        Endpoint -->|HTTP POST| Parser
+        Parser -->|パース| Normalizer
+        Normalizer -->|正規化| TimeCorrector
+        TimeCorrector -->|補正| Buffer
+        Buffer -->|非同期<br/>バッチ書き込み| Storage
+    end
+    
+    EngineFluentd -->|HTTP/JSON| Endpoint
+```
+
+### Engine側からの転送形式
+
+Engine側のFluentdから以下の形式でログが転送されます：
+
+#### Nginxアクセスログ
+
+**タグ**: `nginx.access`（Engine側のタグ設計に準拠）
+
+**レコード構造**:
+```json
+{
+  "time": "2026-02-17T13:30:00+09:00",
+  "remote_addr": "192.168.1.100",
+  "request": "GET /api/users HTTP/1.1",
+  "status": 200,
+  "body_bytes_sent": 1234,
+  "request_time": 0.123,
+  "host": "example.com",
+  "customer_name": "customer-a",
+  "log_type": "nginx",
+  "hostname": "waf-engine-01",
+  "fqdn": "example.com",
+  "year": "2026",
+  "month": "02",
+  "day": "17",
+  "hour": "13",
+  "minute": "30",
+  "second": "45"
+}
+```
+
+#### OpenAppSec検知ログ
+
+**タグ**: `openappsec.detection`（Engine側のタグ設計に準拠）
+
+**レコード構造**:
+```json
+{
+  "time": "2026-02-17T13:30:00+09:00",
+  "host": "example.com",
+  "protectionName": "Threat Prevention Basic",
+  "signature": "SQL Injection Attempt",
+  "ruleName": "rule_001",
+  "sourceIP": "192.168.1.100",
+  "requestUri": "/admin/login",
+  "log_type": "openappsec",
+  "source": "waf-engine",
+  "hostname": "waf-engine-01",
+  "customer_name": "customer-a",
+  "fqdn": "example.com",
+  "year": "2026",
+  "month": "02",
+  "day": "17",
+  "hour": "13",
+  "minute": "30",
+  "second": "45"
+}
 ```
 
 ### 技術スタック
 
-- **ログ収集**: Fluentd / Fluent Bit
-- **受信エンドポイント**: Python (FastAPI / Flask) または Go
-- **データ処理**: Python / Go
+- **ログ受信**: Python (FastAPI)
+- **データ処理**: Python
+- **非同期I/O**: aiofiles, asyncio
 - **ストレージ**: File System（初期）/ Database（将来）
 
 ---
@@ -71,219 +167,375 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant WAF as WAF Engine
-    participant FB as Fluent Bit
-    participant LS as Log Server
+    participant EF as Engine Fluentd
+    participant LR as Log Receiver
     participant P as Parser
+    participant N as Normalizer
     participant TC as Time Corrector
     participant B as Buffer
     participant S as Storage
 
-    WAF->>FB: ログ出力
-    FB->>LS: HTTP POST /logs
-    LS->>P: ログデータ
-    P->>P: パース・正規化
-    P->>TC: 正規化済みログ
+    EF->>LR: HTTP POST /api/logs (JSON)
+    LR->>P: ログデータ
+    P->>P: パース・検証
+    P->>N: パース済みログ
+    N->>N: 正規化
+    N->>TC: 正規化済みログ
     TC->>TC: タイムスタンプ補正
     TC->>B: 補正済みログ
     B->>B: バッファに追加
-    LS-->>FB: 200 OK (即座に応答)
+    LR-->>EF: 200 OK (即座に応答)
     
     Note over B,S: 非同期処理
-    B->>B: フラッシュ条件チェック
-    B->>S: バッチ書き込み
+    B->>B: フラッシュ条件チェック<br/>(サイズ・時間)
+    B->>S: バッチ書き込み<br/>(aiofiles使用)
 ```
 
 ### フロー説明
 
-1. **ログ転送**: WAFエンジンがFluentd/Fluent Bitにログを出力
-2. **ログ受信**: Log ServerがHTTP/TCPでログを受信
-3. **パース**: ログ形式（JSON、Syslog等）をパース
-4. **正規化**: 共通フォーマットに変換
-5. **タイムスタンプ補正**: タイムゾーン変換、欠損補完
-6. **バッファリング**: メモリバッファに追加後、**即座に200 OKを返す**（非同期処理）
-7. **永続化**: バックグラウンドでバッファからストレージに保存（フラッシュ条件: サイズ・時間）
+1. **ログ受信**: Engine FluentdからHTTP POSTでログを受信（JSON形式）
+2. **パース**: JSON形式のログをパース・必須フィールド検証
+3. **正規化**: LogServerの内部データモデル（LogEntry）に変換
+4. **タイムスタンプ補正**: タイムゾーン変換、欠損補完、未来時刻補正
+5. **バッファリング**: メモリバッファに追加後、**即座に200 OKを返す**（非同期処理）
+6. **永続化**: バックグラウンドで非同期にストレージに保存（フラッシュ条件: サイズ・時間）
 
 ---
 
 ## コンポーネント設計
 
-### 1. Fluent Bit設定
+### 1. Log Receiver（受信エンドポイント）
 
-#### 設定ファイル構成
-
-```
-config/
-├── fluent-bit.conf        # メイン設定
-├── parsers.conf           # パーサー定義
-└── plugins.conf           # プラグイン設定（オプション）
-```
-
-#### fluent-bit.conf 基本構成
-
-```ini
-[SERVICE]
-    Flush        1
-    Daemon       off
-    Log_Level    info
-    Parsers_File parsers.conf
-
-[INPUT]
-    Name     forward
-    Listen   0.0.0.0
-    Port     24224
-
-[INPUT]
-    Name     tail
-    Path     /var/log/waf/*.log
-    Tag      waf.*
-    Parser   json
-
-[OUTPUT]
-    Name     http
-    Match    *
-    Host     log-server
-    Port     8080
-    URI      /api/logs
-    Format   json
-```
-
-#### parsers.conf
-
-```ini
-[PARSER]
-    Name        json
-    Format      json
-    Time_Key    timestamp
-    Time_Format %Y-%m-%dT%H:%M:%S.%L%z
-
-[PARSER]
-    Name        syslog
-    Format      regex
-    Regex       ^<(?<pri>[0-9]+)>(?<time>[^ ]*) (?<host>[^ ]*) (?<ident>[^ ]*) (?<message>.*)$
-    Time_Key    time
-    Time_Format %b %d %H:%M:%S
-```
-
-### 2. Log Server（受信エンドポイント）
-
-#### APIエンドポイント設計
+#### APIエンドポイント
 
 **POST /api/logs**
 
-リクエスト:
+Engine Fluentdから以下の形式でログを受信：
+
+- **単一ログ**: 1つのJSONオブジェクト
+- **バッチログ**: JSONオブジェクトの配列
+
+リクエスト例（単一ログ）:
 ```json
 {
-  "timestamp": "2026-02-17T13:30:00.123+09:00",
-  "level": "info",
-  "source": "waf-engine-01",
-  "message": "HTTP request blocked",
-  "metadata": {
-    "client_ip": "192.168.1.100",
-    "request_uri": "/admin/login",
-    "rule_id": "WAF-001"
-  }
+  "time": "2026-02-17T13:30:00.123+09:00",
+  "log_type": "nginx",
+  "hostname": "waf-engine-01",
+  "customer_name": "customer-a",
+  "fqdn": "example.com",
+  "remote_addr": "192.168.1.100",
+  "request": "GET /api/users HTTP/1.1",
+  "status": 200
 }
+```
+
+リクエスト例（バッチログ）:
+```json
+[
+  { "time": "...", "log_type": "nginx", ... },
+  { "time": "...", "log_type": "nginx", ... },
+  { "time": "...", "log_type": "openappsec", ... }
+]
 ```
 
 レスポンス:
 ```json
 {
   "status": "success",
-  "received": 1,
+  "received": 3,
   "timestamp": "2026-02-17T13:30:00.456+09:00"
 }
 ```
 
-#### TCPエンドポイント設計
+**GET /health**
 
-- **ポート**: 5140（Syslog互換）
-- **プロトコル**: TCP
-- **フォーマット**: Syslog RFC5424 / JSON
+ヘルスチェックエンドポイント：
 
-### 3. Log Parser
-
-#### クラス設計
-
-```mermaid
-classDiagram
-    class LogParser {
-        +parse(raw_log: str) LogEntry
-        -detect_format(raw_log: str) str
-        -parse_json(raw_log: str) dict
-        -parse_syslog(raw_log: str) dict
-    }
-    
-    class LogEntry {
-        +timestamp: datetime
-        +level: str
-        +source: str
-        +message: str
-        +metadata: dict
-        +to_dict() dict
-        +validate() bool
-    }
-    
-    class LogNormalizer {
-        +normalize(log_entry: dict) LogEntry
-        -normalize_level(level: str) str
-        -normalize_timestamp(ts: str) datetime
-    }
-    
-    LogParser --> LogEntry: creates
-    LogNormalizer --> LogEntry: creates
+```json
+{
+  "status": "healthy",
+  "buffer_size": 42,
+  "timestamp": "2026-02-17T13:30:00.123Z"
+}
 ```
 
-#### 対応するログ形式
+#### 実装例
 
-1. **JSON形式**
-   - Fluent Bit forward protocol
-   - カスタムJSON
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Any, Union
+from datetime import datetime
+from contextlib import asynccontextmanager
 
-2. **Syslog形式**
-   - RFC3164 (BSD Syslog)
-   - RFC5424 (Syslog Protocol)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """アプリケーションのライフサイクル管理"""
+    # 起動時
+    print("🚀 MrWebDefence Log Server starting...")
+    yield
+    # 終了時
+    print("🛑 MrWebDefence Log Server shutting down...")
+    await log_buffer.close()  # バッファをフラッシュ
 
-3. **プレーンテキスト**
-   - タイムスタンプ付き
-   - タイムスタンプなし（受信時刻を使用）
+app = FastAPI(
+    title="MrWebDefence Log Server",
+    description="WAFログ収集・管理サーバー",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+class EngineLog(BaseModel):
+    """Engine側から送信されるログ"""
+    time: str
+    log_type: str
+    hostname: str
+    customer_name: str
+    fqdn: str
+    # その他のフィールドは動的に受け付ける
+    
+    class Config:
+        extra = "allow"  # 追加フィールドを許可
+
+@app.post("/api/logs")
+async def receive_logs(logs: Union[EngineLog, List[EngineLog]]):
+    """
+    Engine Fluentdからログを受信
+    
+    - 単一ログまたはバッチログを受け付け
+    - パース・正規化・補正後、バッファに追加
+    - 即座に200 OKを返す（ストレージ書き込みは非同期）
+    """
+    # 単一ログの場合はリストに変換
+    if not isinstance(logs, list):
+        logs = [logs]
+    
+    try:
+        # パース・正規化・補正
+        processed_logs = []
+        for log in logs:
+            # Engine側のログをパース
+            parsed = parser.parse(log.dict())
+            
+            # 正規化
+            log_entry = normalizer.normalize(parsed)
+            
+            # タイムスタンプ補正
+            log_entry = time_corrector.correct(log_entry)
+            
+            processed_logs.append(log_entry)
+        
+        # バッファに追加（非同期、即座にリターン）
+        await log_buffer.add_batch(processed_logs)
+        
+        return {
+            "status": "success",
+            "received": len(processed_logs),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health_check():
+    """ヘルスチェック"""
+    return {
+        "status": "healthy",
+        "buffer_size": log_buffer.size(),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+```
+
+### 2. Log Parser
+
+#### 役割
+
+Engine側から送信されるログを検証・パース：
+
+- JSON形式の検証
+- 必須フィールドの確認（time、log_type、hostname、fqdn）
+- データ型の検証
+- 不正なデータの拒否
+
+#### 実装例
+
+```python
+class LogParser:
+    """Engine側のログをパース"""
+    
+    # 必須フィールド
+    REQUIRED_FIELDS = ['time', 'log_type', 'hostname', 'fqdn']
+    
+    def parse(self, engine_log: dict) -> dict:
+        """
+        Engine側のログを検証・パース
+        
+        Args:
+            engine_log: Engine側のログ辞書
+            
+        Returns:
+            検証済みログ辞書
+            
+        Raises:
+            ValueError: 必須フィールドが欠けている場合
+        """
+        # 必須フィールドの確認
+        for field in self.REQUIRED_FIELDS:
+            if field not in engine_log or engine_log[field] is None:
+                raise ValueError(f"Missing required field: {field}")
+        
+        return engine_log
+```
+
+### 3. Normalizer（正規化）
+
+#### 役割
+
+Engine側のログをLogServerの内部データモデル（LogEntry）に変換：
+
+- タイムスタンプのdatetime変換
+- ログレベルの正規化
+- メッセージの抽出
+- メタデータの整理
+
+#### 実装例
+
+```python
+class LogNormalizer:
+    """Engine側のログをLogServerのデータモデルに正規化"""
+    
+    LEVEL_MAP = {
+        "debug": "debug",
+        "info": "info",
+        "warn": "warning",
+        "warning": "warning",
+        "error": "error",
+        "critical": "critical",
+    }
+    
+    def normalize(self, engine_log: dict) -> LogEntry:
+        """
+        Engine側のログを正規化
+        
+        Args:
+            engine_log: パース済みログ辞書
+            
+        Returns:
+            正規化されたLogEntry
+        """
+        # タイムスタンプをdatetimeに変換
+        timestamp = self._parse_timestamp(engine_log.get("time"))
+        
+        # ログレベルの正規化（存在する場合）
+        level = self._normalize_level(engine_log.get("level", "info"))
+        
+        # メッセージの抽出
+        message = self._extract_message(engine_log)
+        
+        return LogEntry(
+            timestamp=timestamp,
+            level=level,
+            message=message,
+            source=engine_log.get("hostname"),
+            hostname=engine_log.get("hostname"),
+            metadata={
+                "log_type": engine_log.get("log_type"),
+                "customer_name": engine_log.get("customer_name"),
+                "fqdn": engine_log.get("fqdn"),
+                "year": engine_log.get("year"),
+                "month": engine_log.get("month"),
+                "day": engine_log.get("day"),
+                "hour": engine_log.get("hour"),
+                "minute": engine_log.get("minute"),
+                "second": engine_log.get("second"),
+                # Engine側のその他のフィールドをそのまま保持
+                "original_fields": {
+                    k: v for k, v in engine_log.items() 
+                    if k not in ['time', 'log_type', 'hostname', 'customer_name', 'fqdn']
+                }
+            }
+        )
+    
+    def _parse_timestamp(self, time_str: str) -> datetime:
+        """タイムスタンプをdatetimeに変換"""
+        from dateutil import parser as date_parser
+        
+        try:
+            dt = date_parser.parse(time_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            return datetime.now(timezone.utc)
+    
+    def _normalize_level(self, level: str) -> str:
+        """ログレベルを正規化"""
+        level_lower = str(level).lower().strip()
+        return self.LEVEL_MAP.get(level_lower, "info")
+    
+    def _extract_message(self, engine_log: dict) -> str:
+        """ログメッセージを抽出"""
+        log_type = engine_log.get("log_type")
+        
+        if log_type == "nginx":
+            # Nginxログの場合: requestフィールドをメッセージとして使用
+            return engine_log.get("request", "")
+        elif log_type == "openappsec":
+            # OpenAppSecログの場合: signatureをメッセージとして使用
+            return engine_log.get("signature", "WAF Detection")
+        else:
+            # その他: message フィールドまたは空文字列
+            return engine_log.get("message", "")
+```
 
 ### 4. Time Corrector（タイムスタンプ補正）
 
-#### 補正ロジック
+Engine側から送信されるタイムスタンプは既に正しい形式ですが、以下の補正を行います：
 
 ```python
-def correct_timestamp(log_entry):
-    """
-    タイムスタンプを補正する
+class TimeCorrector:
+    """タイムスタンプを補正する"""
     
-    1. タイムゾーン情報がない場合はUTCと仮定
-    2. タイムスタンプがない場合は受信時刻を使用
-    3. 未来のタイムスタンプは受信時刻に補正
-    4. 古すぎるタイムスタンプ（7日以上前）は警告
-    """
-    if log_entry.timestamp is None:
-        log_entry.timestamp = datetime.now(timezone.utc)
-        log_entry.metadata['timestamp_source'] = 'server'
+    def __init__(
+        self, 
+        max_future_offset_minutes: int = 5, 
+        old_log_days: int = 7
+    ) -> None:
+        self.max_future_offset = timedelta(minutes=max_future_offset_minutes)
+        self.old_log_threshold = timedelta(days=old_log_days)
+    
+    def correct(self, log_entry: LogEntry) -> LogEntry:
+        """
+        タイムスタンプを補正
+        
+        1. タイムゾーン情報がない場合はUTCと仮定
+        2. タイムスタンプがない場合は受信時刻を使用
+        3. 未来のタイムスタンプ（5分以上）は受信時刻に補正
+        4. 古すぎるタイムスタンプ（7日以上前）は警告
+        """
+        now = datetime.now(timezone.utc)
+        
+        if log_entry.timestamp is None:
+            log_entry.timestamp = now
+            log_entry.metadata['timestamp_source'] = 'server'
+            return log_entry
+        
+        # タイムゾーン情報の補完
+        if log_entry.timestamp.tzinfo is None:
+            log_entry.timestamp = log_entry.timestamp.replace(tzinfo=timezone.utc)
+            log_entry.metadata['timezone_assumed'] = True
+        
+        # 未来のタイムスタンプチェック（5分以上未来）
+        if log_entry.timestamp > now + self.max_future_offset:
+            log_entry.metadata['timestamp_corrected'] = True
+            log_entry.metadata['original_timestamp'] = log_entry.timestamp.isoformat()
+            log_entry.timestamp = now
+        
+        # 古すぎるタイムスタンプの警告（7日以上前）
+        if log_entry.timestamp < now - self.old_log_threshold:
+            log_entry.metadata['timestamp_warning'] = 'old_timestamp'
+        
         return log_entry
-    
-    # タイムゾーン情報の補完
-    if log_entry.timestamp.tzinfo is None:
-        log_entry.timestamp = log_entry.timestamp.replace(tzinfo=timezone.utc)
-        log_entry.metadata['timezone_assumed'] = True
-    
-    # 未来のタイムスタンプチェック
-    now = datetime.now(timezone.utc)
-    if log_entry.timestamp > now + timedelta(minutes=5):
-        log_entry.metadata['timestamp_corrected'] = True
-        log_entry.metadata['original_timestamp'] = log_entry.timestamp.isoformat()
-        log_entry.timestamp = now
-    
-    # 古すぎるタイムスタンプの警告
-    if log_entry.timestamp < now - timedelta(days=7):
-        log_entry.metadata['timestamp_warning'] = 'old_timestamp'
-    
-    return log_entry
 ```
 
 ### 5. Log Buffer（バッファリング）
@@ -310,340 +562,42 @@ stateDiagram-v2
 
 - **メモリバッファ**: 最大1000件または10MB
 - **フラッシュタイミング**: 
-  - バッファ満杯時
+  - バッファ満杯時（1000件または10MB）
   - 30秒経過時
   - シャットダウン時
 - **バックプレッシャー**: バッファ満杯時は新規ログを拒否（HTTP 503）
+- **非同期処理**: ストレージ書き込みは非同期で実行
 
----
-
-## データ構造
-
-### 正規化後のログエントリ
-
-```python
-@dataclass
-class LogEntry:
-    """正規化後のログエントリ"""
-    
-    # 必須フィールド
-    timestamp: datetime      # UTCタイムスタンプ
-    level: str              # ログレベル (debug, info, warning, error, critical)
-    message: str            # ログメッセージ
-    
-    # オプションフィールド
-    source: Optional[str] = None          # ログソース (例: waf-engine-01)
-    facility: Optional[str] = None        # ファシリティ (例: security, system)
-    hostname: Optional[str] = None        # ホスト名
-    process_id: Optional[int] = None      # プロセスID
-    
-    # メタデータ
-    metadata: dict = field(default_factory=dict)
-    
-    # 内部管理
-    received_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    log_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-```
-
-### ストレージフォーマット
-
-#### ファイルベース（初期実装）
-
-```
-logs/
-├── 2026/
-│   ├── 02/
-│   │   ├── 17/
-│   │   │   ├── waf-engine-01-13.log    # 13時台のログ
-│   │   │   ├── waf-engine-01-14.log    # 14時台のログ
-│   │   │   └── ...
-```
-
-ファイル形式: JSON Lines（1行1ログエントリ）
-
-```jsonl
-{"timestamp":"2026-02-17T13:30:00.123Z","level":"info","source":"waf-engine-01","message":"HTTP request blocked","metadata":{"client_ip":"192.168.1.100"}}
-{"timestamp":"2026-02-17T13:30:01.234Z","level":"warning","source":"waf-engine-01","message":"Rate limit exceeded","metadata":{"client_ip":"192.168.1.100"}}
-```
-
----
-
-## 実装計画
-
-### Phase 1: 基本構造の実装
-
-#### 1.1 プロジェクト構造作成
-
-```
-MrWebDefence-LogServer/
-├── src/
-│   ├── server/          # Webサーバー
-│   │   ├── __init__.py
-│   │   ├── app.py       # FastAPI/Flask アプリケーション
-│   │   └── routes.py    # APIエンドポイント
-│   ├── parser/          # ログパーサー
-│   │   ├── __init__.py
-│   │   ├── log_parser.py
-│   │   ├── normalizer.py
-│   │   └── formats/     # 各形式のパーサー
-│   │       ├── json_parser.py
-│   │       ├── syslog_parser.py
-│   │       └── text_parser.py
-│   ├── corrector/       # タイムスタンプ補正
-│   │   ├── __init__.py
-│   │   └── time_corrector.py
-│   ├── buffer/          # バッファリング
-│   │   ├── __init__.py
-│   │   └── log_buffer.py
-│   └── storage/         # ストレージ
-│       ├── __init__.py
-│       ├── file_storage.py
-│       └── db_storage.py (将来)
-├── config/
-│   ├── fluent-bit.conf
-│   ├── parsers.conf
-│   └── server.yaml
-├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── fixtures/
-├── requirements.txt
-├── pyproject.toml
-└── README.md
-```
-
-#### 1.2 依存関係
-
-```toml
-[tool.poetry.dependencies]
-python = "^3.12"
-fastapi = "^0.109.0"
-uvicorn = "^0.27.0"
-pydantic = "^2.6.0"
-python-dateutil = "^2.8.2"
-pyyaml = "^6.0.1"
-aiofiles = "^23.2.1"  # 非同期ファイルI/O
-
-[tool.poetry.dev-dependencies]
-pytest = "^8.0.0"
-pytest-asyncio = "^0.23.0"
-black = "^24.1.0"
-flake8 = "^7.0.0"
-mypy = "^1.8.0"
-```
-
-### Phase 2: ログ受信エンドポイント実装
-
-#### 2.1 HTTP エンドポイント
-
-```python
-from fastapi import FastAPI, Request, HTTPException
-from pydantic import BaseModel
-from typing import List, Dict, Any
-from datetime import datetime
-
-app = FastAPI()
-
-class LogEntryRequest(BaseModel):
-    timestamp: str | None = None
-    level: str
-    source: str | None = None
-    message: str
-    metadata: Dict[str, Any] = {}
-
-class LogBatchRequest(BaseModel):
-    logs: List[LogEntryRequest]
-
-@app.post("/api/logs")
-async def receive_logs(request: LogBatchRequest):
-    """
-    ログを受信して処理する
-    """
-    try:
-        # パース・正規化
-        parsed_logs = []
-        for log in request.logs:
-            parsed = parser.parse(log.model_dump())
-            normalized = normalizer.normalize(parsed)
-            corrected = time_corrector.correct(normalized)
-            parsed_logs.append(corrected)
-        
-        # バッファに追加
-        buffer.add_batch(parsed_logs)
-        
-        return {
-            "status": "success",
-            "received": len(parsed_logs),
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/health")
-async def health_check():
-    """ヘルスチェック"""
-    return {
-        "status": "healthy",
-        "buffer_size": buffer.size(),
-        "timestamp": datetime.utcnow().isoformat()
-    }
-```
-
-#### 2.2 TCP エンドポイント（Syslog互換）
-
-**重要**: TCPはストリームベースのプロトコルであるため、適切なメッセージフレーミングが必要です。
-
-```python
-import asyncio
-
-async def handle_syslog_connection(reader, writer):
-    """
-    Syslogメッセージを受信して処理する
-    
-    TCPストリームの特性を考慮:
-    - 1回のreadで複数ログを受信する可能性
-    - 1回のreadでログの途中でデータが途切れる可能性
-    - 改行(\n)をデリミタとしてメッセージを切り出す
-    """
-    addr = writer.get_extra_info('peername')
-    print(f"新しい接続: {addr}")
-    
-    buffer = ""  # 受信バッファ
-    
-    try:
-        while True:
-            data = await reader.read(4096)
-            if not data:
-                # 接続終了時、残りのバッファを処理
-                if buffer.strip():
-                    await process_log_message(buffer.strip())
-                break
-            
-            # バッファに追加
-            buffer += data.decode('utf-8')
-            
-            # 改行で分割してメッセージを処理
-            while '\n' in buffer:
-                message, buffer = buffer.split('\n', 1)
-                message = message.strip()
-                
-                if message:
-                    await process_log_message(message)
-    
-    except Exception as e:
-        print(f"エラー: {e}")
-    finally:
-        writer.close()
-        await writer.wait_closed()
-
-
-async def process_log_message(message: str):
-    """ログメッセージをパース・正規化・バッファに追加"""
-    try:
-        # パース
-        log_entry = syslog_parser.parse(message)
-        
-        # 正規化・補正
-        normalized = normalizer.normalize(log_entry)
-        corrected = time_corrector.correct(normalized)
-        
-        # バッファに追加
-        await buffer.add(corrected)
-    except Exception as e:
-        print(f"ログ処理エラー: {e}, メッセージ: {message[:100]}")
-
-
-async def start_tcp_server(host='0.0.0.0', port=5140):
-    """TCPサーバーを起動"""
-    server = await asyncio.start_server(
-        handle_syslog_connection, host, port
-    )
-    
-    print(f"TCP Syslogサーバー起動: {host}:{port}")
-    
-    async with server:
-        await server.serve_forever()
-```
-
-### Phase 3: ログパーサー実装
-
-#### 3.1 JSON パーサー
-
-```python
-class JsonLogParser:
-    """JSON形式のログをパースする"""
-    
-    def parse(self, raw_log: str) -> dict:
-        try:
-            data = json.loads(raw_log)
-            return {
-                'timestamp': data.get('timestamp'),
-                'level': data.get('level', 'info'),
-                'source': data.get('source'),
-                'message': data.get('message', ''),
-                'metadata': data.get('metadata', {})
-            }
-        except json.JSONDecodeError as e:
-            raise ParseError(f"Invalid JSON: {e}")
-```
-
-#### 3.2 Syslog パーサー
-
-```python
-class SyslogParser:
-    """Syslog形式のログをパースする"""
-    
-    SYSLOG_REGEX = re.compile(
-        r'^<(?P<pri>\d+)>'
-        r'(?P<timestamp>\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+'
-        r'(?P<hostname>\S+)\s+'
-        r'(?P<tag>\S+):\s*'
-        r'(?P<message>.*)$'
-    )
-    
-    def parse(self, raw_log: str) -> dict:
-        match = self.SYSLOG_REGEX.match(raw_log)
-        if not match:
-            raise ParseError("Invalid syslog format")
-        
-        pri = int(match.group('pri'))
-        facility = pri >> 3
-        severity = pri & 0x07
-        
-        return {
-            'timestamp': match.group('timestamp'),
-            'level': self._severity_to_level(severity),
-            'source': match.group('hostname'),
-            'message': match.group('message'),
-            'metadata': {
-                'facility': facility,
-                'tag': match.group('tag')
-            }
-        }
-```
-
-### Phase 4: バッファリング実装
+#### 実装例
 
 ```python
 class LogBuffer:
     """ログをメモリ上でバッファリングする"""
     
-    def __init__(self, max_size=1000, max_age_seconds=30):
+    def __init__(
+        self,
+        max_size: int = 1000,
+        max_age_seconds: int = 30,
+        storage=None,
+    ) -> None:
         self.buffer: List[LogEntry] = []
         self.max_size = max_size
         self.max_age_seconds = max_age_seconds
+        self.storage = storage
         self.lock = asyncio.Lock()
         self.last_flush = datetime.now(timezone.utc)
-    
-    async def add(self, log_entry: LogEntry):
+
+    async def add_batch(self, log_entries: List[LogEntry]) -> None:
+        """ログエントリをバッファに追加"""
         async with self.lock:
-            self.buffer.append(log_entry)
+            self.buffer.extend(log_entries)
             
             # 自動フラッシュ条件チェック
             if self._should_flush():
                 await self.flush()
     
     def _should_flush(self) -> bool:
+        """フラッシュすべきか判定"""
         # サイズチェック
         if len(self.buffer) >= self.max_size:
             return True
@@ -655,9 +609,9 @@ class LogBuffer:
         
         return False
     
-    async def flush(self):
-        """バッファをストレージに書き込む"""
-        if not self.buffer:
+    async def flush(self) -> None:
+        """バッファをストレージに書き込む（非同期）"""
+        if not self.buffer or self.storage is None:
             return
         
         async with self.lock:
@@ -665,13 +619,57 @@ class LogBuffer:
             self.buffer.clear()
             self.last_flush = datetime.now(timezone.utc)
         
-        # ストレージに書き込み
-        await storage.write_batch(logs_to_write)
+        # ストレージに非同期書き込み
+        await self.storage.write_batch(logs_to_write)
 ```
 
-### Phase 5: ストレージ実装
+### 6. Storage（ストレージ）
 
-**重要**: 非同期I/Oを使用してイベントループのブロックを回避します。
+#### ファイルベース（初期実装）
+
+Engine側の設計を参考に、ログを構造化して保存：
+
+**ディレクトリ構造**:
+```
+logs/
+├── {customer_name}/
+│   ├── {log_type}/
+│   │   ├── {fqdn}/
+│   │   │   ├── {year}/
+│   │   │   │   ├── {month}/
+│   │   │   │   │   ├── {day}/
+│   │   │   │   │   │   ├── {hour}.log
+```
+
+**例**:
+```
+logs/
+├── customer-a/
+│   ├── nginx/
+│   │   ├── example.com/
+│   │   │   ├── 2026/
+│   │   │   │   ├── 02/
+│   │   │   │   │   ├── 17/
+│   │   │   │   │   │   ├── 13.log
+│   │   │   │   │   │   ├── 14.log
+│   ├── openappsec/
+│   │   ├── example.com/
+│   │   │   ├── 2026/
+│   │   │   │   ├── 02/
+│   │   │   │   │   ├── 17/
+│   │   │   │   │   │   ├── 13.log
+```
+
+**ファイル形式**: JSON Lines（1行1ログエントリ）
+
+```jsonl
+{"log_id":"uuid","timestamp":"2026-02-17T13:30:00.123Z","level":"info","source":"waf-engine-01","message":"GET /api/users HTTP/1.1","metadata":{...}}
+{"log_id":"uuid","timestamp":"2026-02-17T13:30:01.234Z","level":"warning","source":"waf-engine-01","message":"Rate limit exceeded","metadata":{...}}
+```
+
+#### 非同期I/O実装
+
+**重要**: 非同期I/Oを使用してイベントループのブロックを回避
 
 ```python
 import aiofiles
@@ -681,20 +679,46 @@ from typing import List
 class FileStorage:
     """ファイルベースのストレージ（非同期I/O）"""
     
-    def __init__(self, base_path="logs"):
+    def __init__(self, base_path: str = "logs") -> None:
         self.base_path = Path(base_path)
     
     def _get_log_file_path(self, log_entry: LogEntry) -> Path:
-        """ログファイルのパスを生成（時間別に分割）"""
-        ts = log_entry.timestamp
-        source = log_entry.source or 'unknown'
+        """
+        ログファイルのパスを生成
         
-        return self.base_path / str(ts.year) / f"{ts.month:02d}" / f"{ts.day:02d}" / f"{source}-{ts.hour:02d}.log"
+        パス構造: 
+        logs/{customer_name}/{log_type}/{fqdn}/{year}/{month}/{day}/{hour}.log
+        
+        例:
+        logs/customer-a/nginx/example.com/2026/02/17/13.log
+        """
+        ts = log_entry.timestamp
+        metadata = log_entry.metadata
+        
+        customer_name = metadata.get('customer_name', 'default')
+        log_type = metadata.get('log_type', 'unknown')
+        fqdn = metadata.get('fqdn', 'unknown')
+        
+        return (
+            self.base_path 
+            / customer_name 
+            / log_type 
+            / fqdn
+            / str(ts.year)
+            / f"{ts.month:02d}"
+            / f"{ts.day:02d}"
+            / f"{ts.hour:02d}.log"
+        )
     
-    async def write_batch(self, log_entries: List[LogEntry]):
-        """ログエントリをバッチで書き込む（非同期I/O）"""
+    async def write_batch(self, log_entries: List[LogEntry]) -> None:
+        """
+        ログエントリをバッチで書き込む（非同期I/O）
+        
+        Args:
+            log_entries: ログエントリのリスト
+        """
         # ファイル別にグルーピング
-        grouped = {}
+        grouped: dict[Path, List[LogEntry]] = {}
         for entry in log_entries:
             path = self._get_log_file_path(entry)
             if path not in grouped:
@@ -703,20 +727,186 @@ class FileStorage:
         
         # ファイルごとに書き込み（非同期）
         for path, entries in grouped.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # aiofilesを使用した非同期ファイルI/O
-            async with aiofiles.open(path, 'a', encoding='utf-8') as f:
-                for entry in entries:
-                    line = json.dumps(entry.to_dict(), ensure_ascii=False) + '\n'
-                    await f.write(line)
+            await self._write_to_file(path, entries)
+    
+    async def _write_to_file(self, path: Path, log_entries: List[LogEntry]) -> None:
+        """
+        指定されたファイルにログエントリを書き込む（非同期）
+        
+        Args:
+            path: ファイルパス
+            log_entries: ログエントリのリスト
+        """
+        # ディレクトリを作成
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # aiofilesを使用した非同期ファイルI/O
+        async with aiofiles.open(path, 'a', encoding='utf-8') as f:
+            for entry in log_entries:
+                line = json.dumps(entry.to_dict(), ensure_ascii=False) + '\n'
+                await f.write(line)
 ```
 
-**依存関係の追加**:
-```toml
-[tool.poetry.dependencies]
-aiofiles = "^23.2.1"  # 非同期ファイルI/O
+---
+
+## データ構造
+
+### 正規化後のログエントリ
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Optional, Dict, Any
+import uuid
+
+@dataclass
+class LogEntry:
+    """正規化後のログエントリ"""
+    
+    # 必須フィールド
+    timestamp: datetime      # UTCタイムスタンプ
+    level: str              # ログレベル (debug, info, warning, error, critical)
+    message: str            # ログメッセージ
+    
+    # オプションフィールド
+    source: Optional[str] = None          # ログソース（waf-engine-01等）
+    hostname: Optional[str] = None        # ホスト名
+    
+    # メタデータ（Engine側から送信された情報を保持）
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    # metadata例:
+    # {
+    #   "log_type": "nginx" | "openappsec",
+    #   "customer_name": "customer-a",
+    #   "fqdn": "example.com",
+    #   "year": "2026",
+    #   "month": "02",
+    #   "day": "17",
+    #   "hour": "13",
+    #   "minute": "30",
+    #   "second": "45",
+    #   "original_fields": {
+    #     ... Engine側のその他のフィールド
+    #   }
+    # }
+    
+    # 内部管理
+    received_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    log_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    
+    def to_dict(self) -> dict:
+        """辞書形式に変換"""
+        return {
+            "log_id": self.log_id,
+            "timestamp": self.timestamp.isoformat(),
+            "level": self.level,
+            "message": self.message,
+            "source": self.source,
+            "hostname": self.hostname,
+            "metadata": self.metadata,
+            "received_at": self.received_at.isoformat(),
+        }
 ```
+
+---
+
+## 実装計画
+
+### Phase 1: プロジェクト構造の作成
+
+#### 1.1 ディレクトリ構造
+
+```
+MrWebDefence-LogServer/
+├── src/
+│   ├── __init__.py
+│   ├── models.py        # データモデル（LogEntry）
+│   ├── server/          # Webサーバー（FastAPI）
+│   │   ├── __init__.py
+│   │   └── app.py       # FastAPIアプリケーション
+│   ├── parser/          # ログパーサー
+│   │   ├── __init__.py
+│   │   ├── log_parser.py
+│   │   └── normalizer.py
+│   ├── corrector/       # タイムスタンプ補正
+│   │   ├── __init__.py
+│   │   └── time_corrector.py
+│   ├── buffer/          # バッファリング
+│   │   ├── __init__.py
+│   │   └── log_buffer.py
+│   └── storage/         # ストレージ
+│       ├── __init__.py
+│       ├── file_storage.py
+│       └── db_storage.py (将来)
+├── config/
+│   └── server.yaml      # サーバー設定
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   └── fixtures/
+│       ├── nginx_log_samples.json
+│       └── openappsec_log_samples.json
+├── docs/
+│   └── design/
+│       └── MWD-53-log-collection.md
+├── scripts/
+│   ├── dev-server.sh
+│   └── run-tests.sh
+├── pyproject.toml
+├── .gitignore
+└── README.md
+```
+
+#### 1.2 依存関係
+
+```toml
+[tool.poetry]
+name = "mrwebdefence-logserver"
+version = "0.1.0"
+description = "MrWebDefence Log Collection and Management Server"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.109.0"
+uvicorn = {extras = ["standard"], version = "^0.27.0"}
+pydantic = "^2.6.0"
+python-dateutil = "^2.8.2"
+pyyaml = "^6.0.1"
+aiofiles = "^23.2.1"  # 非同期ファイルI/O
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-asyncio = "^0.23.0"
+black = "^24.1.0"
+flake8 = "^7.0.0"
+mypy = "^1.8.0"
+httpx = "^0.26.0"  # テスト用HTTP クライアント
+```
+
+### Phase 2: データモデル実装
+
+`src/models.py`にLogEntryデータクラスを実装（前述の実装を使用）
+
+### Phase 3: Log Receiver実装
+
+`src/server/app.py`にFastAPIアプリケーションを実装（前述の実装を使用）
+
+### Phase 4: Parser & Normalizer実装
+
+- `src/parser/log_parser.py`: Engine側のログをパース
+- `src/parser/normalizer.py`: LogEntryに正規化
+
+### Phase 5: Time Corrector実装
+
+`src/corrector/time_corrector.py`にタイムスタンプ補正を実装
+
+### Phase 6: Buffer実装
+
+`src/buffer/log_buffer.py`にバッファリング機能を実装
+
+### Phase 7: Storage実装
+
+`src/storage/file_storage.py`にファイルストレージを実装（aiofiles使用）
 
 ---
 
@@ -724,47 +914,94 @@ aiofiles = "^23.2.1"  # 非同期ファイルI/O
 
 ### Unit Tests
 
-1. **Log Parser Tests**
-   - JSON形式のパース
-   - Syslog形式のパース
-   - 不正なフォーマットのエラーハンドリング
+#### 1. Log Parser Tests (`tests/unit/test_log_parser.py`)
+- Engine側のログ形式のパース
+- 必須フィールドの検証
+- 不正なフォーマットのエラーハンドリング
 
-2. **Normalizer Tests**
-   - ログレベルの正規化
-   - タイムスタンプの正規化
-   - メタデータのマージ
+#### 2. Normalizer Tests (`tests/unit/test_normalizer.py`)
+- Engine側のログからLogEntryへの変換
+- タイムスタンプのパース
+- メッセージの抽出（log_type別）
+- メタデータの整理
 
-3. **Time Corrector Tests**
-   - タイムゾーン補正
-   - 未来のタイムスタンプ補正
-   - タイムスタンプ欠損時の補完
+#### 3. Time Corrector Tests (`tests/unit/test_time_corrector.py`)
+- タイムゾーン補正
+- 未来のタイムスタンプ補正
+- タイムスタンプ欠損時の補完
 
-4. **Buffer Tests**
-   - バッファリング動作
-   - 自動フラッシュ
-   - サイズ上限の動作
+#### 4. Buffer Tests (`tests/unit/test_log_buffer.py`)
+- バッファリング動作
+- 自動フラッシュ（サイズ・時間）
+- シャットダウン時のフラッシュ
 
-5. **Storage Tests**
-   - ファイル書き込み
-   - ディレクトリ作成
-   - バッチ書き込み
+#### 5. Storage Tests (`tests/unit/test_file_storage.py`)
+- ファイル書き込み（非同期I/O）
+- ディレクトリ作成（Engine側の構造に準拠）
+- バッチ書き込み
 
 ### Integration Tests
 
-1. **HTTP Endpoint Tests**
-   - ログ受信API
-   - バッチログ受信
-   - エラーケース（不正なJSON等）
+#### 1. API Endpoint Tests (`tests/integration/test_api.py`)
+- Engine側のログ受信（単一ログ）
+- バッチログ受信
+- エラーケース（必須フィールド欠如等）
 
-2. **TCP Endpoint Tests**
-   - Syslogメッセージ受信
-   - 接続の維持
-   - 切断処理
+#### 2. End-to-End Tests (`tests/integration/test_e2e.py`)
+- Engine Fluentd → Log Server → Storage
+- 大量ログの処理
+- エラーリカバリー
 
-3. **End-to-End Tests**
-   - Fluent Bit → Log Server → Storage
-   - 大量ログの処理
-   - エラーリカバリー
+### テストデータ（Fixtures）
+
+#### Nginxログサンプル (`tests/fixtures/nginx_log_samples.json`)
+
+```json
+[
+  {
+    "time": "2026-02-17T13:30:00+09:00",
+    "remote_addr": "192.168.1.100",
+    "request": "GET /api/users HTTP/1.1",
+    "status": 200,
+    "body_bytes_sent": 1234,
+    "request_time": 0.123,
+    "host": "example.com",
+    "customer_name": "customer-a",
+    "log_type": "nginx",
+    "hostname": "waf-engine-01",
+    "fqdn": "example.com",
+    "year": "2026",
+    "month": "02",
+    "day": "17",
+    "hour": "13"
+  }
+]
+```
+
+#### OpenAppSecログサンプル (`tests/fixtures/openappsec_log_samples.json`)
+
+```json
+[
+  {
+    "time": "2026-02-17T13:30:00+09:00",
+    "host": "example.com",
+    "protectionName": "Threat Prevention Basic",
+    "signature": "SQL Injection Attempt",
+    "ruleName": "rule_001",
+    "sourceIP": "192.168.1.100",
+    "requestUri": "/admin/login",
+    "log_type": "openappsec",
+    "source": "waf-engine",
+    "hostname": "waf-engine-01",
+    "customer_name": "customer-a",
+    "fqdn": "example.com",
+    "year": "2026",
+    "month": "02",
+    "day": "17",
+    "hour": "13"
+  }
+]
+```
 
 ---
 
@@ -773,20 +1010,32 @@ aiofiles = "^23.2.1"  # 非同期ファイルI/O
 ### パフォーマンス
 
 - **スループット**: 1000 logs/sec以上
-- **レイテンシ**: 受信から保存まで100ms以内（通常時）
+- **レイテンシ**: 
+  - 受信からバッファ追加まで: 10ms以内
+  - バッファからストレージまで: 100ms以内（バックグラウンド処理）
 - **メモリ使用量**: 100MB以内（バッファ含む）
+- **同時接続数**: 100接続以上
 
 ### 信頼性
 
 - **データロス**: ゼロ（シャットダウン時もバッファをフラッシュ）
 - **可用性**: 99.9%以上
 - **再起動時間**: 5秒以内
+- **エラーリカバリー**: 自動リトライ、エラーログ出力
 
 ### セキュリティ
 
-- **認証**: APIキーベース（環境変数で管理）
+- **認証**: APIキーベース（環境変数で管理、将来実装）
 - **暗号化**: TLS/SSL対応（オプション）
 - **入力検証**: すべての入力をバリデーション
+- **レート制限**: 過負荷防止（将来実装）
+
+### 運用性
+
+- **ヘルスチェック**: GET /health
+- **モニタリング**: バッファサイズ、受信ログ数
+- **ログ出力**: 構造化ログ（JSON形式）
+- **設定管理**: YAMLファイルによる設定
 
 ---
 
@@ -798,20 +1047,21 @@ aiofiles = "^23.2.1"  # 非同期ファイルI/O
 server:
   host: 0.0.0.0
   http_port: 8080
-  tcp_port: 5140
   workers: 4
 
 buffer:
-  max_size: 1000
-  max_age_seconds: 30
-  max_memory_mb: 10
+  max_size: 1000           # バッファの最大サイズ（件数）
+  max_age_seconds: 30      # バッファの最大保持時間（秒）
+  max_memory_mb: 10        # バッファの最大メモリ使用量（MB）
 
 storage:
   type: file
   base_path: logs
-  rotation:
-    by_hour: true
-    max_file_size_mb: 100
+  # ディレクトリ構造: {customer_name}/{log_type}/{fqdn}/{year}/{month}/{day}/{hour}.log
+
+time_correction:
+  max_future_offset_minutes: 5    # 未来のタイムスタンプ許容範囲（分）
+  old_log_warning_days: 7         # 古いログ警告閾値（日）
 
 logging:
   level: info
@@ -828,38 +1078,145 @@ logging:
 # 開発環境
 poetry run python -m src.server.app
 
-# 本番環境
-poetry run uvicorn src.server.app:app --host 0.0.0.0 --port 8080 --workers 4
+# 本番環境（4ワーカー）
+poetry run uvicorn src.server.app:app \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --workers 4
 ```
 
-### ログローテーション
+### ログファイルの確認
 
-- **時間別**: 1時間ごとに新しいファイル
-- **サイズ別**: 100MB超過時に新しいファイル
-- **保存期間**: 30日（設定可能）
+```bash
+# ログディレクトリ構造を確認
+ls -R logs/
+
+# 特定のログファイルを確認
+cat logs/customer-a/nginx/example.com/2026/02/17/13.log | jq .
+
+# ログエントリ数をカウント
+find logs/ -type f -name "*.log" -exec wc -l {} + | tail -1
+```
 
 ### モニタリング
 
-- **ヘルスチェック**: GET /health
-- **メトリクス**: GET /metrics（将来）
-  - 受信ログ数
-  - バッファサイズ
-  - エラー数
+```bash
+# ヘルスチェック
+curl http://localhost:8080/health
+
+# バッファサイズの監視
+watch -n 5 'curl -s http://localhost:8080/health | jq .buffer_size'
+```
+
+### ログアーカイブ
+
+Engine側のlogrotate設定（毎日ローテート）と連携し、古いログをアーカイブ：
+
+```bash
+# 30日以上前のログを圧縮
+find logs/ -type f -name "*.log" -mtime +30 -exec gzip {} \;
+
+# 90日以上前のログを削除
+find logs/ -type f -name "*.log.gz" -mtime +90 -delete
+```
 
 ---
 
 ## 将来の拡張
 
-1. **データベースストレージ**: PostgreSQL, TimescaleDB
-2. **ログ検索**: Elasticsearch連携
-3. **ログ可視化**: Grafana/Kibana連携
-4. **アラート機能**: 特定パターン検出時の通知
-5. **分散処理**: 複数ノードでの負荷分散
+### 短期（Phase 2）
+
+1. **認証機能**: APIキーベースの認証
+2. **メトリクスエンドポイント**: Prometheusメトリクス出力
+3. **ログ検索API**: 基本的なログ検索機能
+
+### 中期（Phase 3）
+
+1. **データベースストレージ**: PostgreSQL, TimescaleDB対応
+2. **ログ集約**: 複数のEngine instanceからのログ受信
+3. **アラート機能**: 特定パターン検出時の通知
+
+### 長期（Phase 4）
+
+1. **Elasticsearch連携**: ログ検索・可視化
+2. **Grafana/Kibana連携**: ダッシュボード
+3. **分散処理**: 複数ノードでの負荷分散
+4. **Kubernetes対応**: Helm Chart、StatefulSet
+
+---
+
+## Engine側との連携仕様
+
+### 1. HTTPエンドポイント
+
+**URL**: `http://log-server:8080/api/logs`（Docker Compose環境）
+
+**メソッド**: POST
+
+**Content-Type**: application/json
+
+**Body**: 単一ログまたはログの配列
+
+### 2. Engine側のFluentd設定例
+
+```aconf
+# Engine側（docker/fluentd/fluent.conf）
+
+<match {nginx,openappsec}.**>
+  @type http
+  endpoint http://log-server:8080/api/logs
+  http_method post
+  <headers>
+    Content-Type application/json
+  </headers>
+  <buffer>
+    @type file
+    path /var/log/fluentd/buffer
+    flush_interval 5s
+    retry_type exponential_backoff
+    retry_wait 1s
+    retry_max_interval 60s
+    retry_timeout 60m
+  </buffer>
+  <format>
+    @type json
+  </format>
+</match>
+```
+
+### 3. Engine側のタグ設計との対応
+
+Engine側のタグ設計（シンプルなタグ構造）を維持：
+
+| Engine側タグ | LogServer受信内容 | LogServer内部処理 |
+|-------------|-------------------|------------------|
+| `nginx.access` | `log_type: "nginx"` | メッセージ: `request`フィールド |
+| `nginx.error` | `log_type: "nginx"` | メッセージ: `message`フィールド |
+| `openappsec.detection` | `log_type: "openappsec"` | メッセージ: `signature`フィールド |
+
+### 4. メタデータフィールドの保持
+
+Engine側から送信されたすべてのメタデータフィールドを保持：
+
+- `customer_name`: 顧客名
+- `fqdn`: FQDN
+- `hostname`: ホスト名
+- `year`, `month`, `day`, `hour`, `minute`, `second`: タイムスタンプ情報
+- その他のフィールド: `metadata.original_fields`に保存
 
 ---
 
 ## 参考資料
 
-- Fluent Bit Documentation: https://docs.fluentbit.io/
-- Syslog RFC5424: https://tools.ietf.org/html/rfc5424
-- FastAPI Documentation: https://fastapi.tiangolo.com/
+### Engine側設計書
+
+- [MWD-40: Fluentd設定ファイルのモジュール化計画](https://github.com/kencom2400/MrWebDefence-Engine/blob/main/docs/design/MWD-40-fluentd-modularization-plan.md)
+- [MWD-40: ログ転送機能実装 実装設計書](https://github.com/kencom2400/MrWebDefence-Engine/blob/main/docs/design/MWD-40-implementation-plan.md)
+- [MWD-40: ログ連携方法比較検討](https://github.com/kencom2400/MrWebDefence-Engine/blob/main/docs/design/MWD-40-log-integration-analysis.md)
+
+### 技術ドキュメント
+
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [aiofiles Documentation](https://github.com/Tinche/aiofiles)
+- [Pydantic Documentation](https://docs.pydantic.dev/)
+- [Fluentd公式ドキュメント](https://docs.fluentd.org/)
