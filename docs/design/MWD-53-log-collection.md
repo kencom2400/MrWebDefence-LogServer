@@ -201,8 +201,8 @@ Engine FluentdからHTTP経由でログを受信：
   
   # TLS暗号化
   <transport tls>
-    version TLSv1_2
-    ciphers ALL:!aNULL:!eNULL:!SSLv2
+    version TLSv1_3,TLSv1_2
+    ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256
     
     # サーバー証明書
     cert_path /etc/fluentd/certs/logserver.crt
@@ -344,112 +344,74 @@ Engine FluentdからHTTP経由でログを受信：
 
 ### 4. 出力設定（03-output.conf）
 
-顧客別・FQDN別・時間別にファイル出力：
+顧客別・FQDN別・時間別にファイル出力。共通設定をlabelでまとめてDRYに保つ：
 
 ```xml
-# Nginxログの出力
-<match nginx.**>
-  @type file
-  @id output_nginx_file
-  
-  # ファイルパス: /var/log/mrwebdefence/{customer_name}/nginx/{fqdn}/{year}/{month}/{day}/{hour}.log.gz
-  path /var/log/mrwebdefence/${safe_customer_name}/nginx/${safe_fqdn}/%Y/%m/%d/%H
-  path_suffix ".log"
-  
-  # バッファ設定
-  <buffer safe_customer_name,log_type,safe_fqdn,time>
-    @type file
-    path /var/log/fluentd/buffer/nginx
-    
-    # 時間ベースのチャンキング（1時間ごと）
-    timekey 1h
-    timekey_wait 10s
-    timekey_use_utc true
-    timekey_zone "+0900"
-    
-    # バッファサイズ制限（DoS対策）
-    chunk_limit_size 256m
-    total_limit_size 2g
-    
-    # フラッシュ設定
-    flush_mode interval
-    flush_interval 10s
-    flush_at_shutdown true
-    flush_thread_count 2
-    
-    # リトライ設定
-    retry_type exponential_backoff
-    retry_timeout 1h
-    retry_max_interval 30s
-    retry_wait 10s
-    
-    # オーバーフロー時の動作
-    overflow_action block
-  </buffer>
-  
-  # ファイル出力形式（JSON Lines）
-  <format>
-    @type json
-  </format>
-  
-  # ファイル圧縮
-  compress gzip
-  
-  # ファイルパーミッション
-  <inject>
-    time_key timestamp
-    time_type string
-    time_format %Y-%m-%dT%H:%M:%S.%LZ
-    timezone +0900
-  </inject>
+# ログをストレージラベルにルーティング
+<match {nginx,openappsec}.**>
+  @type relabel
+  @label @log_storage
 </match>
 
-# OpenAppSecログの出力
-<match openappsec.**>
-  @type file
-  @id output_openappsec_file
-  
-  path /var/log/mrwebdefence/${safe_customer_name}/openappsec/${safe_fqdn}/%Y/%m/%d/%H
-  path_suffix ".log"
-  
-  <buffer safe_customer_name,log_type,safe_fqdn,time>
+# 共通のファイルストレージ設定
+<label @log_storage>
+  <match **>
     @type file
-    path /var/log/fluentd/buffer/openappsec
+    @id output_file_storage
     
-    timekey 1h
-    timekey_wait 10s
-    timekey_use_utc true
-    timekey_zone "+0900"
+    # 動的なファイルパス: /var/log/mrwebdefence/{customer_name}/{log_type}/{fqdn}/{year}/{month}/{day}/{hour}.log.gz
+    # tag_parts[0] で "nginx" または "openappsec" を取得
+    path /var/log/mrwebdefence/${safe_customer_name}/${log_type}/${safe_fqdn}/%Y/%m/%d/%H
+    path_suffix ".log"
     
-    chunk_limit_size 256m
-    total_limit_size 2g
+    # バッファ設定（共通）
+    <buffer safe_customer_name,log_type,safe_fqdn,time>
+      @type file
+      path /var/log/fluentd/buffer/${log_type}
+      
+      # 時間ベースのチャンキング（1時間ごと）
+      timekey 1h
+      timekey_wait 10s
+      timekey_use_utc true
+      timekey_zone "+0900"
+      
+      # バッファサイズ制限（DoS対策）
+      chunk_limit_size 256m
+      total_limit_size 2g
+      
+      # フラッシュ設定
+      flush_mode interval
+      flush_interval 10s
+      flush_at_shutdown true
+      flush_thread_count 2
+      
+      # リトライ設定
+      retry_type exponential_backoff
+      retry_timeout 1h
+      retry_max_interval 30s
+      retry_wait 10s
+      
+      # オーバーフロー時の動作
+      overflow_action block
+    </buffer>
     
-    flush_mode interval
-    flush_interval 10s
-    flush_at_shutdown true
-    flush_thread_count 2
+    # ファイル出力形式（JSON Lines）
+    <format>
+      @type json
+    </format>
     
-    retry_type exponential_backoff
-    retry_timeout 1h
-    retry_max_interval 30s
-    retry_wait 10s
+    # ファイル圧縮
+    compress gzip
     
-    overflow_action block
-  </buffer>
-  
-  <format>
-    @type json
-  </format>
-  
-  compress gzip
-  
-  <inject>
-    time_key timestamp
-    time_type string
-    time_format %Y-%m-%dT%H:%M:%S.%LZ
-    timezone +0900
-  </inject>
-</match>
+    # タイムスタンプ挿入
+    <inject>
+      time_key timestamp
+      time_type string
+      time_format %Y-%m-%dT%H:%M:%S.%LZ
+      timezone +0900
+    </inject>
+  </match>
+</label>
 
 # 処理できなかったログを別ファイルに出力（デバッグ用）
 <match **>
@@ -650,8 +612,8 @@ DELETE_DAYS=90
 # 30日以上前のログをS3にアーカイブ（オプション）
 if command -v aws &> /dev/null; then
   echo "Archiving logs older than ${ARCHIVE_DAYS} days to S3..."
-  find "${LOG_BASE_DIR}" -name "*.log.gz" -mtime +${ARCHIVE_DAYS} -type f | \
-    while read -r file; do
+  find "${LOG_BASE_DIR}" -name "*.log.gz" -mtime +${ARCHIVE_DAYS} -type f -print0 | \
+    while IFS= read -r -d '' file; do
       relative_path="${file#${LOG_BASE_DIR}/}"
       aws s3 cp "${file}" "s3://mrwebdefence-logs-archive/${relative_path}" && \
         echo "Archived: ${file}"
@@ -924,40 +886,40 @@ Engine側のFluentd設定で、LogServerへの転送を設定：
 
 ## 実装チェックリスト
 
-### Phase 1: 基本設定 ✅
+### Phase 1: 基本設定
 
 - [ ] Fluentd設定ファイルの作成（fluent.conf）
 - [ ] 入力設定の作成（01-source.conf）
 - [ ] フィルタ設定の作成（02-filter.conf）
 - [ ] 出力設定の作成（03-output.conf）
 
-### Phase 2: Docker環境 ✅
+### Phase 2: Docker環境
 
 - [ ] Dockerfileの作成
 - [ ] docker-compose.ymlの作成
 - [ ] .env.exampleの作成
 - [ ] .dockerignoreの作成
 
-### Phase 3: セキュリティ ✅
+### Phase 3: セキュリティ
 
 - [ ] 証明書生成スクリプトの作成
 - [ ] mTLS設定のドキュメント作成
 - [ ] 共有シークレット設定のドキュメント作成
 
-### Phase 4: 運用 ✅
+### Phase 4: 運用
 
 - [ ] ログアーカイブスクリプトの作成
 - [ ] ヘルスチェックスクリプトの作成
 - [ ] モニタリング設定のドキュメント作成
 
-### Phase 5: テスト ✅
+### Phase 5: テスト
 
 - [ ] 設定ファイルの検証テスト
 - [ ] ログ送信テスト（curl）
 - [ ] E2Eテスト（Engine連携）
 - [ ] パフォーマンステスト
 
-### Phase 6: ドキュメント ✅
+### Phase 6: ドキュメント
 
 - [ ] README更新
 - [ ] セットアップガイド作成
