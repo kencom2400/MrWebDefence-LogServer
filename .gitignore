@@ -45,6 +45,7 @@ logs/
 .coverage
 htmlcov/
 .tox/
+coverage.xml
 
 # Config
 config/server.local.yaml

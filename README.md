@@ -1,5 +1,8 @@
 # MrWebDefence-LogServer
 
+[![Test](https://github.com/kencom2400/MrWebDefence-LogServer/actions/workflows/test.yml/badge.svg)](https://github.com/kencom2400/MrWebDefence-LogServer/actions/workflows/test.yml)
+[![Lint](https://github.com/kencom2400/MrWebDefence-LogServer/actions/workflows/lint.yml/badge.svg)](https://github.com/kencom2400/MrWebDefence-LogServer/actions/workflows/lint.yml)
+
 このリポジトリは、MrWebDefenceシステムのログ収集・管理サーバーです。
 
 ## 📋 現在のステータス
@@ -102,6 +105,29 @@ poetry run pytest tests/integration/ -v
 
 # すべてのテストを実行
 poetry run pytest tests/ -v
+```
+
+### CIでのテスト実行
+
+GitHub Actionsで自動的にテストが実行されます：
+
+- **Test Workflow**: Pull Request作成時に自動実行
+  - Python 3.12、3.13の両方でテスト
+  - Unit Tests + Integration Tests
+  - コードカバレッジ計測（目標: 85%以上）
+  
+- **Lint Workflow**: コード品質チェック
+  - Black（フォーマット）
+  - flake8（スタイルチェック）
+  - mypy（型チェック）
+
+ローカルでのテスト実行：
+
+```bash
+# テスト実行スクリプトを使用
+./scripts/run-tests.sh          # すべてのテスト
+./scripts/run-tests.sh unit     # ユニットテストのみ
+./scripts/run-tests.sh coverage # カバレッジ付き
 ```
 
 ## 📁 プロジェクト構造
