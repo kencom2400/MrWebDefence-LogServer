@@ -16,7 +16,7 @@ def sample_nginx_log():
         "customer_name": "test_customer",
         "request": "GET /api/users HTTP/1.1",
         "status": "200",
-        "remote_addr": "192.168.1.100"
+        "remote_addr": "192.168.1.100",
     }
 
 
@@ -31,7 +31,7 @@ def sample_openappsec_log():
         "customer_name": "test_customer",
         "signature": "SQL Injection Detected",
         "level": "error",
-        "source_ip": "203.0.113.45"
+        "source_ip": "203.0.113.45",
     }
 
 
@@ -44,9 +44,5 @@ def sample_log_entry():
         message="Test message",
         source="waf-engine-01",
         hostname="waf-engine-01",
-        metadata={
-            "log_type": "nginx",
-            "customer_name": "test_customer",
-            "fqdn": "example.com"
-        }
+        metadata={"log_type": "nginx", "customer_name": "test_customer", "fqdn": "example.com"},
     )

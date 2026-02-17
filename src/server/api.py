@@ -14,8 +14,7 @@ from src.models import ParseError, BufferFullError
 
 # ロガー設定
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -24,12 +23,7 @@ parser = LogParser()
 normalizer = LogNormalizer()
 corrector = TimeCorrector()
 storage = FileStorage(base_dir="logs")
-buffer = LogBuffer(
-    max_count=1000,
-    max_memory_mb=50,
-    flush_interval_sec=10,
-    storage=storage
-)
+buffer = LogBuffer(max_count=1000, max_memory_mb=50, flush_interval_sec=10, storage=storage)
 
 
 @asynccontextmanager
@@ -39,24 +33,21 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Log Server...")
     asyncio.create_task(buffer.start_periodic_flush())
     logger.info("Log Server started successfully")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down Log Server...")
     await buffer.flush()
     logger.info("Log Server shutdown complete")
 
 
-app = FastAPI(
-    title="MrWebDefence Log Server",
-    version="0.1.0",
-    lifespan=lifespan
-)
+app = FastAPI(title="MrWebDefence Log Server", version="0.1.0", lifespan=lifespan)
 
 
 class LogRequest(BaseModel):
     """ログ受信リクエスト"""
+
     logs: List[Dict[str, Any]]
 
 
@@ -64,13 +55,13 @@ class LogRequest(BaseModel):
 async def receive_logs(request: LogRequest):
     """
     Engine側からログを受信
-    
+
     Args:
         request: ログリクエスト
-        
+
     Returns:
         受信結果
-        
+
     Raises:
         HTTPException: エラー時
     """
@@ -78,18 +69,18 @@ async def receive_logs(request: LogRequest):
         # 受信したログを処理
         parsed_logs = []
         failed_count = 0
-        
+
         for raw_log in request.logs:
             try:
                 # 1. パース（検証）
                 validated_log = parser.parse(raw_log)
-                
+
                 # 2. 正規化
                 log_entry = normalizer.normalize(validated_log)
-                
+
                 # 3. 時刻補正
                 log_entry = corrector.correct(log_entry)
-                
+
                 parsed_logs.append(log_entry)
             except ParseError as e:
                 # パースエラーは警告レベル（個別ログの失敗は継続）
@@ -99,14 +90,13 @@ async def receive_logs(request: LogRequest):
                 # その他のエラーもログして継続
                 logger.error(f"Unexpected error processing log: {e}")
                 failed_count += 1
-        
+
         # すべてのログが失敗した場合は400エラー
         if not parsed_logs and failed_count > 0:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="All logs failed to parse"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="All logs failed to parse"
             )
-        
+
         # 4. バッファに追加
         try:
             await buffer.add_batch(parsed_logs)
@@ -115,16 +105,12 @@ async def receive_logs(request: LogRequest):
             logger.warning("Buffer full, returning 503")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Service temporarily unavailable. Please retry later."
+                detail="Service temporarily unavailable. Please retry later.",
             )
-        
+
         # 成功レスポンス
-        return {
-            "status": "ok",
-            "received": len(parsed_logs),
-            "failed": failed_count
-        }
-    
+        return {"status": "ok", "received": len(parsed_logs), "failed": failed_count}
+
     except HTTPException:
         # FastAPIのHTTPExceptionはそのまま再送出
         raise
@@ -132,8 +118,7 @@ async def receive_logs(request: LogRequest):
         # その他のエラーは500として返す（詳細は隠す）
         logger.error(f"Internal error processing logs: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
         )
 
 

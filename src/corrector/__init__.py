@@ -2,4 +2,4 @@
 
 from src.corrector.time_corrector import TimeCorrector
 
-__all__ = ['TimeCorrector']
+__all__ = ["TimeCorrector"]
