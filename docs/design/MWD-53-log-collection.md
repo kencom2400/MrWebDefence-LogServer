@@ -305,6 +305,7 @@ async def receive_logs(logs: Union[EngineLog, List[EngineLog]]):
     - 単一ログまたはバッチログを受け付け
     - パース・正規化・補正後、バッファに追加
     - 即座に200 OKを返す（ストレージ書き込みは非同期）
+    - バッファが満杯の場合は503 Service Unavailableを返す
     """
     # 単一ログの場合はリストに変換
     if not isinstance(logs, list):
@@ -333,6 +334,12 @@ async def receive_logs(logs: Union[EngineLog, List[EngineLog]]):
             "received": len(processed_logs),
             "timestamp": datetime.utcnow().isoformat()
         }
+    except BufferFullError as e:
+        # バッファ満杯の場合は503を返す（バックプレッシャー）
+        raise HTTPException(
+            status_code=503,
+            detail=f"Buffer is full, please retry later: {str(e)}"
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -565,12 +572,19 @@ stateDiagram-v2
   - バッファ満杯時（1000件または10MB）
   - 30秒経過時
   - シャットダウン時
-- **バックプレッシャー**: バッファ満杯時は新規ログを拒否（HTTP 503）
-- **非同期処理**: ストレージ書き込みは非同期で実行
+- **バックプレッシャー（背圧）**: 
+  - バッファが90%以上満杯の場合、新規ログを拒否（HTTP 503）
+  - Engine Fluentdにリトライを促す
+  - メモリ枯渇を防止
+- **非同期処理**: ストレージ書き込みは非同期で実行（イベントループをブロックしない）
 
 #### 実装例
 
 ```python
+class BufferFullError(Exception):
+    """バッファが満杯の場合に発生する例外"""
+    pass
+
 class LogBuffer:
     """ログをメモリ上でバッファリングする"""
     
@@ -578,28 +592,72 @@ class LogBuffer:
         self,
         max_size: int = 1000,
         max_age_seconds: int = 30,
+        max_memory_mb: int = 10,
         storage=None,
     ) -> None:
         self.buffer: List[LogEntry] = []
         self.max_size = max_size
         self.max_age_seconds = max_age_seconds
+        self.max_memory_bytes = max_memory_mb * 1024 * 1024
         self.storage = storage
         self.lock = asyncio.Lock()
         self.last_flush = datetime.now(timezone.utc)
 
     async def add_batch(self, log_entries: List[LogEntry]) -> None:
-        """ログエントリをバッファに追加"""
+        """
+        ログエントリをバッファに追加
+        
+        Raises:
+            BufferFullError: バッファが満杯の場合
+        """
         async with self.lock:
+            # バッファ満杯チェック（バックプレッシャー）
+            if self._is_buffer_full(len(log_entries)):
+                raise BufferFullError(
+                    f"Buffer is full: {len(self.buffer)} entries, "
+                    f"{self._get_buffer_size_bytes()} bytes"
+                )
+            
             self.buffer.extend(log_entries)
             
             # 自動フラッシュ条件チェック
             if self._should_flush():
                 await self.flush()
     
+    def _is_buffer_full(self, additional_entries: int = 0) -> bool:
+        """
+        バッファが満杯か判定（バックプレッシャー用）
+        
+        Args:
+            additional_entries: 追加しようとしているエントリ数
+            
+        Returns:
+            バッファが満杯の場合True
+        """
+        # エントリ数チェック（余裕を持たせて90%で満杯とみなす）
+        if (len(self.buffer) + additional_entries) >= self.max_size * 0.9:
+            return True
+        
+        # メモリサイズチェック（概算）
+        current_size = self._get_buffer_size_bytes()
+        if current_size >= self.max_memory_bytes * 0.9:
+            return True
+        
+        return False
+    
+    def _get_buffer_size_bytes(self) -> int:
+        """バッファのメモリサイズを概算（バイト）"""
+        # 簡易的な見積もり: 1エントリあたり平均1KB
+        return len(self.buffer) * 1024
+    
     def _should_flush(self) -> bool:
         """フラッシュすべきか判定"""
         # サイズチェック
         if len(self.buffer) >= self.max_size:
+            return True
+        
+        # メモリサイズチェック
+        if self._get_buffer_size_bytes() >= self.max_memory_bytes:
             return True
         
         # 時間チェック
@@ -608,6 +666,10 @@ class LogBuffer:
             return True
         
         return False
+    
+    def size(self) -> int:
+        """現在のバッファサイズを取得"""
+        return len(self.buffer)
     
     async def flush(self) -> None:
         """バッファをストレージに書き込む（非同期）"""
@@ -621,6 +683,10 @@ class LogBuffer:
         
         # ストレージに非同期書き込み
         await self.storage.write_batch(logs_to_write)
+    
+    async def close(self) -> None:
+        """シャットダウン時にバッファをフラッシュ"""
+        await self.flush()
 ```
 
 ### 6. Storage（ストレージ）
