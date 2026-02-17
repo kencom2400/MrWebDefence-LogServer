@@ -74,31 +74,23 @@ run_terminal_cmd({
 
 `@start-task`コマンドを受け取った際は、以下の順序でIssueトラッカーを判定してください：
 
-#### 1. Jiraスクリプトの存在確認（最優先）
+#### 推奨実装（if-elif-else）
 
 ```bash
-# Jiraスクリプトが存在する場合はJiraを使用
+# Jiraを優先、存在しない場合はGitHubを試行
 if [ -f "scripts/jira/workflow/start-task.sh" ]; then
   # Jiraを使用
   bash scripts/jira/workflow/start-task.sh
-fi
-```
-
-#### 2. GitHubスクリプトの存在確認（フォールバック）
-
-```bash
-# Jiraスクリプトが存在しない場合、GitHubスクリプトを確認
-if [ -f "scripts/github/workflow/start-task.sh" ]; then
+elif [ -f "scripts/github/workflow/start-task.sh" ]; then
   # GitHubを使用
   bash scripts/github/workflow/start-task.sh
+else
+  echo "❌ エラー: start-task.shスクリプトが見つかりません"
+  exit 1
 fi
 ```
 
-#### 3. どちらも存在しない場合
-
-エラーメッセージを表示して終了します。
-
-### 実装例
+#### TypeScript実装例
 
 ```typescript
 // ✅ 推奨: 自動判定

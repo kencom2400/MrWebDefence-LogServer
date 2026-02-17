@@ -86,10 +86,12 @@ sequenceDiagram
     P->>TC: 正規化済みログ
     TC->>TC: タイムスタンプ補正
     TC->>B: 補正済みログ
-    B->>B: バッファリング
+    B->>B: バッファに追加
+    LS-->>FB: 200 OK (即座に応答)
+    
+    Note over B,S: 非同期処理
+    B->>B: フラッシュ条件チェック
     B->>S: バッチ書き込み
-    S-->>LS: 完了
-    LS-->>FB: 200 OK
 ```
 
 ### フロー説明
@@ -99,8 +101,8 @@ sequenceDiagram
 3. **パース**: ログ形式（JSON、Syslog等）をパース
 4. **正規化**: 共通フォーマットに変換
 5. **タイムスタンプ補正**: タイムゾーン変換、欠損補完
-6. **バッファリング**: メモリ上で一時保持
-7. **永続化**: ストレージに保存
+6. **バッファリング**: メモリバッファに追加後、**即座に200 OKを返す**（非同期処理）
+7. **永続化**: バックグラウンドでバッファからストレージに保存（フラッシュ条件: サイズ・時間）
 
 ---
 
@@ -420,6 +422,7 @@ uvicorn = "^0.27.0"
 pydantic = "^2.6.0"
 python-dateutil = "^2.8.2"
 pyyaml = "^6.0.1"
+aiofiles = "^23.2.1"  # 非同期ファイルI/O
 
 [tool.poetry.dev-dependencies]
 pytest = "^8.0.0"
@@ -488,33 +491,44 @@ async def health_check():
 
 #### 2.2 TCP エンドポイント（Syslog互換）
 
+**重要**: TCPはストリームベースのプロトコルであるため、適切なメッセージフレーミングが必要です。
+
 ```python
 import asyncio
-import socket
 
 async def handle_syslog_connection(reader, writer):
     """
     Syslogメッセージを受信して処理する
+    
+    TCPストリームの特性を考慮:
+    - 1回のreadで複数ログを受信する可能性
+    - 1回のreadでログの途中でデータが途切れる可能性
+    - 改行(\n)をデリミタとしてメッセージを切り出す
     """
     addr = writer.get_extra_info('peername')
     print(f"新しい接続: {addr}")
+    
+    buffer = ""  # 受信バッファ
     
     try:
         while True:
             data = await reader.read(4096)
             if not data:
+                # 接続終了時、残りのバッファを処理
+                if buffer.strip():
+                    await process_log_message(buffer.strip())
                 break
             
-            # パース
-            message = data.decode('utf-8').strip()
-            log_entry = syslog_parser.parse(message)
-            
-            # 正規化・補正
-            normalized = normalizer.normalize(log_entry)
-            corrected = time_corrector.correct(normalized)
-            
             # バッファに追加
-            buffer.add(corrected)
+            buffer += data.decode('utf-8')
+            
+            # 改行で分割してメッセージを処理
+            while '\n' in buffer:
+                message, buffer = buffer.split('\n', 1)
+                message = message.strip()
+                
+                if message:
+                    await process_log_message(message)
     
     except Exception as e:
         print(f"エラー: {e}")
@@ -522,11 +536,30 @@ async def handle_syslog_connection(reader, writer):
         writer.close()
         await writer.wait_closed()
 
+
+async def process_log_message(message: str):
+    """ログメッセージをパース・正規化・バッファに追加"""
+    try:
+        # パース
+        log_entry = syslog_parser.parse(message)
+        
+        # 正規化・補正
+        normalized = normalizer.normalize(log_entry)
+        corrected = time_corrector.correct(normalized)
+        
+        # バッファに追加
+        await buffer.add(corrected)
+    except Exception as e:
+        print(f"ログ処理エラー: {e}, メッセージ: {message[:100]}")
+
+
 async def start_tcp_server(host='0.0.0.0', port=5140):
     """TCPサーバーを起動"""
     server = await asyncio.start_server(
         handle_syslog_connection, host, port
     )
+    
+    print(f"TCP Syslogサーバー起動: {host}:{port}")
     
     async with server:
         await server.serve_forever()
@@ -638,9 +671,15 @@ class LogBuffer:
 
 ### Phase 5: ストレージ実装
 
+**重要**: 非同期I/Oを使用してイベントループのブロックを回避します。
+
 ```python
+import aiofiles
+from pathlib import Path
+from typing import List
+
 class FileStorage:
-    """ファイルベースのストレージ"""
+    """ファイルベースのストレージ（非同期I/O）"""
     
     def __init__(self, base_path="logs"):
         self.base_path = Path(base_path)
@@ -653,7 +692,7 @@ class FileStorage:
         return self.base_path / str(ts.year) / f"{ts.month:02d}" / f"{ts.day:02d}" / f"{source}-{ts.hour:02d}.log"
     
     async def write_batch(self, log_entries: List[LogEntry]):
-        """ログエントリをバッチで書き込む"""
+        """ログエントリをバッチで書き込む（非同期I/O）"""
         # ファイル別にグルーピング
         grouped = {}
         for entry in log_entries:
@@ -662,14 +701,21 @@ class FileStorage:
                 grouped[path] = []
             grouped[path].append(entry)
         
-        # ファイルごとに書き込み
+        # ファイルごとに書き込み（非同期）
         for path, entries in grouped.items():
             path.parent.mkdir(parents=True, exist_ok=True)
             
-            with open(path, 'a', encoding='utf-8') as f:
+            # aiofilesを使用した非同期ファイルI/O
+            async with aiofiles.open(path, 'a', encoding='utf-8') as f:
                 for entry in entries:
-                    json.dump(entry.to_dict(), f, ensure_ascii=False)
-                    f.write('\n')
+                    line = json.dumps(entry.to_dict(), ensure_ascii=False) + '\n'
+                    await f.write(line)
+```
+
+**依存関係の追加**:
+```toml
+[tool.poetry.dependencies]
+aiofiles = "^23.2.1"  # 非同期ファイルI/O
 ```
 
 ---
