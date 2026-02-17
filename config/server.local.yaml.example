@@ -1,0 +1,15 @@
+# Local Configuration (Example)
+# Copy this file to server.local.yaml and customize for your environment
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  log_level: "debug"
+
+buffer:
+  max_count: 500
+  max_memory_mb: 25
+  flush_interval_sec: 5
+
+storage:
+  base_dir: "/var/log/mrwebdefence"

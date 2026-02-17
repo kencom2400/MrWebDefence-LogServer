@@ -1,25 +1,23 @@
+# Log Server Configuration
+
 server:
-  host: 0.0.0.0
-  http_port: 8080
-  tcp_port: 5140
-  workers: 4
+  host: "0.0.0.0"
+  port: 8080
+  log_level: "info"
 
 buffer:
-  max_size: 1000
-  max_age_seconds: 30
-  max_memory_mb: 10
+  max_count: 1000           # バッファに保持する最大ログ数
+  max_memory_mb: 50         # バッファの最大メモリサイズ（MB）
+  flush_interval_sec: 10    # 定期的にフラッシュする間隔（秒）
 
 storage:
-  type: file
-  base_path: logs
-  rotation:
-    by_hour: true
-    max_file_size_mb: 100
+  base_dir: "logs"          # ログファイルの保存ディレクトリ
+  # 時間ベースのファイル分割は自動（1時間ごと）
+  # 古いログのアーカイブ・削除は外部スクリプトで実施
 
-time_correction:
-  max_future_offset_minutes: 5
-  old_log_warning_days: 7
+parser:
+  max_field_length: 1024    # フィールド値の最大長（バイト）
+  max_message_length: 10240 # メッセージの最大長（バイト）
 
-logging:
-  level: info
-  format: json
+corrector:
+  future_tolerance_sec: 300 # 未来のログとして許容する時間（秒）
