@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import List
 from src.models import LogEntry, BufferFullError
 

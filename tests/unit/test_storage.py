@@ -1,7 +1,6 @@
 """File Storageのユニットテスト"""
 
 import pytest
-import asyncio
 import json
 from pathlib import Path
 from datetime import datetime, timezone

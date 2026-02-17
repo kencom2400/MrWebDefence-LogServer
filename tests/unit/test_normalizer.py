@@ -1,7 +1,5 @@
 """Normalizerのユニットテスト"""
 
-import pytest
-from datetime import datetime, timezone
 from src.parser.normalizer import LogNormalizer
 
 

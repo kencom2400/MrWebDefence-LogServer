@@ -1,7 +1,6 @@
 """Log Bufferのユニットテスト"""
 
 import pytest
-import asyncio
 from datetime import datetime, timezone
 from src.buffer.log_buffer import LogBuffer
 from src.models import LogEntry, BufferFullError
