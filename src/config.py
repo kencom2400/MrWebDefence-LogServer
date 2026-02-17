@@ -17,6 +17,11 @@ class Config:
         self.server_host = "0.0.0.0"
         self.server_port = 8080
         self.server_log_level = "info"
+        self.server_use_ssl = False
+        self.server_ssl_certfile = None
+        self.server_ssl_keyfile = None
+
+        self.auth_api_keys = []  # 空の場合は認証無効（開発用）
 
         self.buffer_max_count = 1000
         self.buffer_max_memory_mb = 50
@@ -58,6 +63,14 @@ class Config:
             self.server_host = server.get("host", self.server_host)
             self.server_port = server.get("port", self.server_port)
             self.server_log_level = server.get("log_level", self.server_log_level)
+            self.server_use_ssl = server.get("use_ssl", self.server_use_ssl)
+            self.server_ssl_certfile = server.get("ssl_certfile", self.server_ssl_certfile)
+            self.server_ssl_keyfile = server.get("ssl_keyfile", self.server_ssl_keyfile)
+
+        # Auth設定
+        if "auth" in config_data:
+            auth = config_data["auth"]
+            self.auth_api_keys = auth.get("api_keys", self.auth_api_keys)
 
         # Buffer設定
         if "buffer" in config_data:

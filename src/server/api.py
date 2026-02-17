@@ -4,9 +4,10 @@ import logging
 import asyncio
 from typing import List, Dict, Any
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends
 from pydantic import BaseModel
 from src.config import get_config
+from src.auth import APIKeyAuth
 from src.parser import LogParser, LogNormalizer
 from src.corrector import TimeCorrector
 from src.buffer import LogBuffer
@@ -22,6 +23,14 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# 認証設定
+api_key_auth = APIKeyAuth(api_keys=config.auth_api_keys)
+if not api_key_auth.enabled:
+    logger.warning(
+        "API key authentication is DISABLED. "
+        "This is insecure and should only be used in development!"
+    )
 
 # コンポーネント初期化（設定から値を取得）
 parser = LogParser(config=config)
@@ -63,12 +72,13 @@ class LogRequest(BaseModel):
 
 
 @app.post("/api/logs", status_code=status.HTTP_200_OK)
-async def receive_logs(request: LogRequest):
+async def receive_logs(request: LogRequest, _: str = Depends(api_key_auth)):
     """
-    Engine側からログを受信
+    Engine側からログを受信（API Key認証必須）
 
     Args:
         request: ログリクエスト
+        _: APIキー（Dependsで自動検証）
 
     Returns:
         受信結果

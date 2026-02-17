@@ -68,9 +68,44 @@ poetry install --with dev
 設定ファイルをコピーしてカスタマイズ:
 
 ```bash
-cp config/server.yaml.example config/server.local.yaml
+cp config/server.local.yaml.example config/server.local.yaml
 # server.local.yaml を環境に合わせて編集
 ```
+
+**重要な設定項目**:
+
+- **認証（必須）**: 本番環境では必ずAPIキーを設定してください
+
+```yaml
+auth:
+  api_keys:
+    - "your-secure-api-key-here"
+```
+
+- **HTTPS（推奨）**: 本番環境ではHTTPSを有効化してください
+
+```yaml
+server:
+  use_ssl: true
+  ssl_certfile: "/path/to/cert.pem"
+  ssl_keyfile: "/path/to/key.pem"
+```
+
+### セキュリティ設定
+
+本番環境では以下の設定が**必須**です：
+
+1. **APIキー認証の有効化**
+   - `config/server.local.yaml`で`auth.api_keys`を設定
+   - 推奨: 32文字以上のランダムな文字列
+
+2. **HTTPS通信の有効化**
+   - SSL証明書と秘密鍵を用意
+   - `server.use_ssl: true`に設定
+   - Engine側のFluentdも対応するURLに変更
+
+3. **ファイアウォール設定**
+   - ログサーバーのポートをEngine側からのみアクセス可能に制限
 
 ### 起動
 

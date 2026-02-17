@@ -120,3 +120,56 @@ class TestLogServerIntegration:
             data = response.json()
             assert data["received"] == 10
             assert data["failed"] == 0
+
+
+class TestAuthentication:
+    """認証機能のテスト"""
+
+    @pytest.mark.asyncio
+    async def test_missing_api_key_when_auth_enabled(self):
+        """認証が有効な場合、APIキーなしでアクセス拒否"""
+        # 注: このテストは認証が有効化されている場合のみ有効
+        # デフォルトでは認証が無効なのでスキップ
+        from src.server.api import api_key_auth
+
+        if not api_key_auth.enabled:
+            pytest.skip("Authentication is disabled in current config")
+
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            payload = {
+                "logs": [
+                    {
+                        "time": "2024-02-17T10:00:00Z",
+                        "log_type": "nginx",
+                        "hostname": "waf-engine-01",
+                        "fqdn": "example.com",
+                    }
+                ]
+            }
+
+            response = await client.post("/api/logs", json=payload)
+            assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_key_when_auth_enabled(self):
+        """認証が有効な場合、無効なAPIキーでアクセス拒否"""
+        from src.server.api import api_key_auth
+
+        if not api_key_auth.enabled:
+            pytest.skip("Authentication is disabled in current config")
+
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            payload = {
+                "logs": [
+                    {
+                        "time": "2024-02-17T10:00:00Z",
+                        "log_type": "nginx",
+                        "hostname": "waf-engine-01",
+                        "fqdn": "example.com",
+                    }
+                ]
+            }
+
+            headers = {"X-API-Key": "invalid-key"}
+            response = await client.post("/api/logs", json=payload, headers=headers)
+            assert response.status_code == 401
