@@ -14,8 +14,8 @@ services:
     volumes:
       # Fluentd設定ファイル
       - ./config/fluentd:/fluentd/etc:ro
-      # テスト用ログストレージ
-      - ./tests/tmp/logs:/var/log/mrwebdefence
+      # テスト用ログストレージ（logsサブディレクトリにマウント）
+      - ./tests/tmp/logs:/var/log/mrwebdefence/logs
       # テスト用バッファ
       - ./tests/tmp/buffer:/var/log/fluentd/buffer
       # テスト用不正なログ
