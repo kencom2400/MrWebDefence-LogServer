@@ -5,6 +5,11 @@ FROM fluent/fluentd:v1.16-debian-1
 # Switch to root for plugin installation
 USER root
 
+# Install gosu for user switching
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install required plugins
 RUN gem install \
     fluent-plugin-rewrite-tag-filter \
@@ -23,8 +28,12 @@ RUN mkdir -p /var/log/mrwebdefence/logs \
     && chmod -R 755 /var/log/mrwebdefence \
     && chmod -R 755 /var/log/fluentd
 
-# Switch back to fluent user
-USER fluent
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# entrypointはrootで実行される必要がある（ディレクトリ作成と権限設定のため）
+# スクリプト内でfluentユーザーに切り替える
 
 # Expose ports
 # 8888: Log receiver (HTTPS)
@@ -37,5 +46,5 @@ EXPOSE 8888 8889 24220 24231
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8889/health || exit 1
 
-# Start Fluentd
-CMD ["fluentd", "-c", "/fluentd/etc/fluent.conf"]
+# Start Fluentd via entrypoint script
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
