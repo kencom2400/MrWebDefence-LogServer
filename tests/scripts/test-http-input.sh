@@ -6,28 +6,6 @@ set -euo pipefail
 
 echo "=== HTTP Input Test ==="
 
-# テスト用証明書生成
-echo "Generating test certificates..."
-CERT_DIR=./tests/certs
-mkdir -p "${CERT_DIR}"
-
-# CA証明書
-openssl genrsa -out "${CERT_DIR}/ca.key" 2048 2>/dev/null
-openssl req -new -x509 -days 365 -key "${CERT_DIR}/ca.key" \
-  -out "${CERT_DIR}/ca.crt" \
-  -subj "/C=JP/O=Test/CN=Test-CA" 2>/dev/null
-
-# サーバー証明書
-openssl genrsa -out "${CERT_DIR}/logserver.key" 2048 2>/dev/null
-openssl req -new -key "${CERT_DIR}/logserver.key" \
-  -out "${CERT_DIR}/logserver.csr" \
-  -subj "/C=JP/O=Test/CN=localhost" 2>/dev/null
-openssl x509 -req -days 365 -in "${CERT_DIR}/logserver.csr" \
-  -CA "${CERT_DIR}/ca.crt" -CAkey "${CERT_DIR}/ca.key" \
-  -CAcreateserial -out "${CERT_DIR}/logserver.crt" 2>/dev/null
-
-rm -f "${CERT_DIR}/logserver.csr"
-
 # テスト環境起動
 echo "Starting test environment..."
 docker compose -f docker-compose.test.yml up -d
@@ -35,9 +13,14 @@ docker compose -f docker-compose.test.yml up -d
 # Fluentd起動待機
 echo "Waiting for Fluentd to be healthy..."
 for i in {1..30}; do
-  if curl -fs http://localhost:8889/health > /dev/null 2>&1; then
-    echo "Fluentd is ready"
-    break
+  if docker exec mrwebdefence-logserver-test pgrep -f fluentd > /dev/null 2>&1; then
+    echo "Fluentd process is running"
+    sleep 3  # ポート準備のための追加待機
+    # ポート8888が利用可能か確認
+    if curl -s -o /dev/null -w "%{http_code}" http://localhost:8888/ 2>&1 | grep -qE "^(200|400|404)"; then
+      echo "Fluentd is ready"
+      break
+    fi
   fi
   if [ $i -eq 30 ]; then
     echo "Error: Fluentd failed to start"
@@ -82,7 +65,7 @@ else
   ((FAILED++))
 fi
 
-# テスト3: customer_name欠損（invalidログとして記録されるべき）
+# テスト3: customer_name欠損（フィルタで"unknown"に変換される）
 echo ""
 echo "Test 3: Missing customer_name"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
@@ -99,15 +82,19 @@ else
 fi
 
 # バッファフラッシュ待機
-sleep 3
+echo ""
+echo "Waiting for buffer flush..."
+sleep 15
 
 # ログファイル確認
 echo ""
 echo "Verifying log files..."
-if [ -d "./tests/tmp/logs/test-customer" ]; then
-  echo "✓ Log directory created"
+if docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence/logs -name "*.log.gz" | grep -q .; then
+  echo "✓ Log files created"
+  LOG_COUNT=$(docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence/logs -name "*.log.gz" -exec zcat {} \; | wc -l)
+  echo "  Total log entries: $LOG_COUNT"
 else
-  echo "✗ Log directory not found"
+  echo "✗ Log files not found"
   ((FAILED++))
 fi
 

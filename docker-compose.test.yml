@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: mrwebdefence-logserver-test
     ports:
-      - "8888:8888"    # Log receiver (HTTPS)
+      - "8888:8888"    # Log receiver (HTTP, Engine側と同一)
       - "8889:8889"    # Health check
       - "24220:24220"  # Monitor agent
       - "24231:24231"  # Prometheus metrics
@@ -22,10 +22,7 @@ services:
       - ./tests/tmp/invalid:/var/log/fluentd/invalid
       # テスト用処理できなかったログ
       - ./tests/tmp/unmatched:/var/log/fluentd/unmatched
-      # テスト用証明書
-      - ./tests/certs:/etc/fluentd/certs:ro
     environment:
-      - FLUENTD_SHARED_KEY=test-shared-key-for-testing-only
       - FLUENTD_LOG_LEVEL=debug
     networks:
       - test-network

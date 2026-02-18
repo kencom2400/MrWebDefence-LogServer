@@ -19,10 +19,8 @@ RUN mkdir -p /var/log/mrwebdefence/logs \
     && mkdir -p /var/log/fluentd/buffer \
     && mkdir -p /var/log/fluentd/invalid \
     && mkdir -p /var/log/fluentd/unmatched \
-    && mkdir -p /etc/fluentd/certs \
     && chown -R fluent:fluent /var/log/mrwebdefence \
     && chown -R fluent:fluent /var/log/fluentd \
-    && chown -R fluent:fluent /etc/fluentd/certs \
     && chmod -R 755 /var/log/mrwebdefence \
     && chmod -R 755 /var/log/fluentd
 
@@ -34,7 +32,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # スクリプト内でfluentユーザーに切り替える
 
 # Expose ports
-# 8888: Log receiver (HTTPS)
+# 8888: Log receiver (HTTP)
 # 8889: Health check
 # 24220: Monitor agent
 # 24231: Prometheus metrics

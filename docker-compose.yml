@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: mrwebdefence-logserver
     ports:
-      - "8888:8888"    # Log receiver (HTTPS)
+      - "8888:8888"    # Log receiver (HTTP, Engine側と同一)
       - "8889:8889"    # Health check
       - "24220:24220"  # Monitor agent
       - "24231:24231"  # Prometheus metrics
@@ -22,10 +22,7 @@ services:
       - invalid:/var/log/fluentd/invalid
       # 処理できなかったログ
       - unmatched:/var/log/fluentd/unmatched
-      # 証明書
-      - ./certs:/etc/fluentd/certs:ro
     environment:
-      - FLUENTD_SHARED_KEY=${FLUENTD_SHARED_KEY:-change-me-in-production}
       - FLUENTD_LOG_LEVEL=${FLUENTD_LOG_LEVEL:-info}
     restart: unless-stopped
     networks:

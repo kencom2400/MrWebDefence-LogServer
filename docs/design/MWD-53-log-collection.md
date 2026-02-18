@@ -34,14 +34,13 @@ WAFエンジン（MrWebDefence-Engine）から転送されるログを受信し�
 - **Fluentd受信サーバーの構築**（Engine Fluentdからのログ受信）
 - **ログ正規化・フィルタリング設定**（Fluentdプラグイン）
 - **ファイルストレージ設定**（顧客別・FQDN別・時間別）
-- **認証・暗号化対応**（TLS、共有シークレット）
+- **Engine側との連携**（HTTP、EngineはBearer送信。必要に応じてネットワーク層で認証）
 
 ### 受け入れ条件
 
 - [ ] Engine FluentdからLogServer Fluentdへのログ転送が正常に動作する
 - [ ] ログが正しいディレクトリ構造で保存される（顧客別・FQDN別・時間別）
-- [ ] TLS暗号化通信が動作する
-- [ ] 認証機能が動作する
+- [ ] Engine側のHTTP/Bearer送信と連携する
 - [ ] ログローテーション・圧縮が動作する
 
 ---
@@ -116,7 +115,7 @@ graph TB
         ServerFluentd -->|ファイル出力| Storage
     end
     
-    EngineFluentd -->|"HTTP/JSON<br/>TLS暗号化<br/>共有シークレット認証"| ServerFluentd
+    EngineFluentd -->|"HTTP/JSON<br/>Bearer送信（Engine側）"| ServerFluentd
     
     style EngineFluentd fill:#e1f5ff
     style ServerFluentd fill:#fff4e6
@@ -140,8 +139,8 @@ sequenceDiagram
     participant B as Buffer
     participant FS as File Storage
 
-    EF->>LF: HTTP POST (JSON + TLS)
-    LF->>LF: 認証チェック
+    EF->>LF: HTTP POST (JSON、Bearer送信)
+    LF->>LF: 受信・パース
     LF->>LF: フィルタ・正規化
     LF->>B: バッファに追加
     LF-->>EF: 200 OK（即座に応答）
@@ -199,20 +198,6 @@ Engine FluentdからHTTP経由でログを受信：
   port 8888
   bind 0.0.0.0
   
-  # TLS暗号化
-  <transport tls>
-    version TLSv1_3,TLSv1_2
-    ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256
-    
-    # サーバー証明書
-    cert_path /etc/fluentd/certs/logserver.crt
-    private_key_path /etc/fluentd/certs/logserver.key
-    
-    # クライアント証明書検証（mTLS）
-    client_cert_auth true
-    ca_path /etc/fluentd/certs/ca.crt
-  </transport>
-  
   # パース設定
   <parse>
     @type json
@@ -228,12 +213,7 @@ Engine FluentdからHTTP経由でログを受信：
   # Body size制限（10MB）
   body_size_limit 10m
   keepalive_timeout 10s
-  
-  # 共有シークレット認証
-  <security>
-    self_hostname logserver-01
-    shared_key "#{ENV['FLUENTD_SHARED_KEY']}"
-  </security>
+  # 認証: Engine側が Bearer 送信。LogServerは検証しない。必要に応じてリバースプロキシ等で認証すること。
 </source>
 
 # モニタリング用エンドポイント
@@ -519,55 +499,12 @@ Engine側の設計と同じ構造を採用：
 
 ## セキュリティ設計
 
-### 1. TLS暗号化（mTLS）
+### 1. 通信・認証（Engine側に合わせる）
 
-Engine Fluentd ↔ LogServer Fluentd間の通信を相互TLS（mTLS）で暗号化：
+- **通信**: HTTP（TLSは使用しない。必要に応じてリバースプロキシやネットワーク層で暗号化すること）
+- **認証**: Engine側が `Authorization: Bearer #{ENV['FLUENTD_OUTPUT_AUTH']}` を送信。LogServer側では in_http の Bearer 検証は行わない（必要に応じてリバースプロキシ等で検証すること）
 
-```xml
-<source>
-  @type http
-  <transport tls>
-    version TLSv1_3,TLSv1_2
-    ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256
-    
-    # サーバー証明書
-    cert_path /etc/fluentd/certs/logserver.crt
-    private_key_path /etc/fluentd/certs/logserver.key
-    
-    # クライアント証明書検証（mTLS）
-    client_cert_auth true
-    ca_path /etc/fluentd/certs/ca.crt
-  </transport>
-</source>
-```
-
-### 2. 共有シークレット認証
-
-```xml
-<source>
-  @type http
-  <security>
-    self_hostname logserver-01
-    shared_key "#{ENV['FLUENTD_SHARED_KEY']}"
-  </security>
-</source>
-```
-
-Engine側の設定：
-
-```xml
-<match **>
-  @type http
-  endpoint https://logserver:8888/
-  
-  <auth>
-    method shared_key
-    shared_key "#{ENV['FLUENTD_SHARED_KEY']}"
-  </auth>
-</match>
-```
-
-### 3. Path Traversal対策
+### 2. Path Traversal対策
 
 Fluentdのfilterで危険な文字列をサニタイズ：
 
@@ -734,16 +671,14 @@ docker exec fluentd kill -USR1 1
 - `docker-compose.yml`
 - `.env.example`
 
-### Phase 3: 証明書・認証設定
+### Phase 3: Engine連携・セキュリティ
 
 **タスク**:
-1. 自己署名証明書生成スクリプトの作成
-2. 共有シークレットの設定方法をドキュメント化
-3. mTLS設定のテスト
+1. Engine側との連携仕様（HTTP・Bearer）のドキュメント整備
+2. 必要に応じてリバースプロキシでの認証・TLSのドキュメント
 
 **成果物**:
-- `scripts/generate-certs.sh`
-- `docs/setup/ssl-setup.md`
+- 設計書・README の連携仕様記載
 
 ### Phase 4: 運用スクリプト
 
@@ -785,13 +720,9 @@ docker run --rm \
 ### 2. ログ送信テスト
 
 ```bash
-# curlでログを送信
-curl -X POST https://localhost:8888/nginx.access \
+# curlでログを送信（Engine側と同様に HTTP、必要なら Bearer ヘッダー）
+curl -X POST http://localhost:8888/nginx.access \
   -H "Content-Type: application/json" \
-  -H "X-Shared-Key: ${FLUENTD_SHARED_KEY}" \
-  --cacert certs/ca.crt \
-  --cert certs/engine-client.crt \
-  --key certs/engine-client.key \
   -d '{
     "time": "2026-02-17T10:00:00+09:00",
     "log_type": "nginx",
@@ -817,8 +748,7 @@ zcat /var/log/mrwebdefence/test-customer/nginx/example.com/2026/02/17/10.log.gz 
 ### 4. E2Eテスト
 
 **前提条件**:
-- Engine FluentdからLogServer Fluentdへの接続が確立されている
-- TLS証明書が正しく設定されている
+- Engine FluentdからLogServer Fluentdへの接続が確立されている（HTTP、Engine側は FLUENTD_OUTPUT_URL / FLUENTD_OUTPUT_AUTH で送信）
 
 **テストシナリオ**:
 1. Engine側でテストログを生成
@@ -833,8 +763,7 @@ zcat /var/log/mrwebdefence/test-customer/nginx/example.com/2026/02/17/10.log.gz 
 ab -n 10000 -c 100 \
   -T 'application/json' \
   -p test-log.json \
-  -H "X-Shared-Key: ${FLUENTD_SHARED_KEY}" \
-  https://localhost:8888/nginx.access
+  http://localhost:8888/nginx.access
 ```
 
 ---
@@ -868,8 +797,8 @@ ab -n 10000 -c 100 \
 
 | 項目 | 実装 |
 |------|------|
-| **通信暗号化** | TLS 1.2以上（mTLS） |
-| **認証** | 共有シークレット |
+| **通信** | HTTP（Engine側に合わせる。必要に応じてネットワーク層で暗号化） |
+| **認証** | Engine側が Bearer 送信。LogServerは検証しない |
 | **入力検証** | フィルタでサニタイズ |
 | **Path Traversal対策** | 危険な文字列を除去 |
 | **DoS対策** | バッファ制限 + レート制限 |
@@ -883,25 +812,17 @@ ab -n 10000 -c 100 \
 Engine側のFluentd設定で、LogServerへの転送を設定：
 
 ```xml
-# Engine側: LogServerへの転送
+# Engine側: LogServerへの転送（実装は docker/fluentd/forwarder.d/http-output.conf を参照）
+# endpoint: FLUENTD_OUTPUT_URL、認証: Authorization Bearer FLUENTD_OUTPUT_AUTH
 <match {nginx,openappsec}.**>
   @type http
   @id output_to_logserver
   
-  endpoint https://logserver:8888/
-  
-  # TLS設定
-  <transport tls>
-    cert_path /etc/fluentd/certs/engine-client.crt
-    private_key_path /etc/fluentd/certs/engine-client.key
-    ca_path /etc/fluentd/certs/ca.crt
-  </transport>
-  
-  # 認証
-  <auth>
-    method shared_key
-    shared_key "#{ENV['FLUENTD_SHARED_KEY']}"
-  </auth>
+  endpoint "#{ENV['FLUENTD_OUTPUT_URL']}"
+  http_method post
+  <headers>
+    Authorization "Bearer #{ENV['FLUENTD_OUTPUT_AUTH']}"
+  </headers>
   
   # バッファ設定
   <buffer>
@@ -947,9 +868,8 @@ Engine側のFluentd設定で、LogServerへの転送を設定：
 
 ### Phase 3: セキュリティ
 
-- [ ] 証明書生成スクリプトの作成
-- [ ] mTLS設定のドキュメント作成
-- [ ] 共有シークレット設定のドキュメント作成
+- [ ] Engine側との連携仕様（HTTP・Bearer）のドキュメント整備
+- [ ] 必要に応じてリバースプロキシでの認証・TLSのドキュメント
 
 ### Phase 4: 運用
 
@@ -998,15 +918,16 @@ Engine側のFluentd設定で、LogServerへの転送を設定：
 
 | 変数名 | 説明 | 例 |
 |--------|------|-----|
-| `FLUENTD_SHARED_KEY` | 共有シークレット | `your-secure-shared-key-here` |
 | `FLUENTD_LOG_LEVEL` | ログレベル | `info` |
 | `FLUENTD_WORKERS` | ワーカー数 | `2` |
+
+（Engine側: `FLUENTD_OUTPUT_URL` / `FLUENTD_OUTPUT_AUTH` でLogServerへの転送先とBearerトークンを指定）
 
 ### B. ポート一覧
 
 | ポート | 用途 | プロトコル |
 |--------|------|-----------|
-| `8888` | ログ受信（TLS） | HTTPS |
+| `8888` | ログ受信（Engine側と同一） | HTTP |
 | `8889` | ヘルスチェック | HTTP |
 | `24220` | モニタリング | HTTP |
 | `24231` | Prometheusメトリクス | HTTP |
