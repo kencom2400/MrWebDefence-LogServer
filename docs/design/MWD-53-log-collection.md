@@ -287,16 +287,13 @@ Engine FluentdからHTTP経由でログを受信：
   </record>
 </filter>
 
-# Nginxログのフィルタリング
-<filter nginx.**>
+# Nginx/OpenAppSecログの共通処理
+<filter {nginx,openappsec}.**>
   @type record_transformer
-  @id filter_nginx
+  @id filter_common_fields
   enable_ruby true
   
   <record>
-    # ログタイプの確認
-    log_type ${record["log_type"] || "nginx"}
-    
     # 必須フィールドの検証（存在しない場合はプレースホルダー）
     customer_name ${record["customer_name"] || "unknown"}
     fqdn ${record["fqdn"] || "unknown"}
@@ -307,38 +304,43 @@ Engine FluentdからHTTP経由でログを受信：
   </record>
 </filter>
 
-# OpenAppSecログのフィルタリング
-<filter openappsec.**>
+# Nginxログの固有処理
+<filter nginx.**>
   @type record_transformer
-  @id filter_openappsec
-  enable_ruby true
+  @id filter_nginx_specifics
   
   <record>
-    log_type ${record["log_type"] || "openappsec"}
-    customer_name ${record["customer_name"] || "unknown"}
-    fqdn ${record["fqdn"] || "unknown"}
-    safe_customer_name ${(record["customer_name"] || "unknown").gsub(/[^a-zA-Z0-9_-]/, '_')}
-    safe_fqdn ${(record["fqdn"] || "unknown").gsub(/[^a-zA-Z0-9._-]/, '_')}
-    
-    # セキュリティイベントの重要度マッピング
+    log_type "nginx"
+  </record>
+</filter>
+
+# OpenAppSecログの固有処理
+<filter openappsec.**>
+  @type record_transformer
+  @id filter_openappsec_specifics
+  
+  <record>
+    log_type "openappsec"
     severity ${record["severity"] || "info"}
   </record>
 </filter>
 
-# 不正なログを除外（customer_nameやfqdnが不明なもの）
+# 不正なログを別ストリームにルーティング（データ損失防止）
 <filter **>
-  @type grep
-  @id filter_exclude_invalid
+  @type rewrite_tag_filter
+  @id filter_rewrite_invalid_logs
   
-  <exclude>
+  <rule>
     key customer_name
     pattern /^unknown$/
-  </exclude>
+    tag invalid.${tag}
+  </rule>
   
-  <exclude>
+  <rule>
     key fqdn
     pattern /^unknown$/
-  </exclude>
+    tag invalid.${tag}
+  </rule>
 </filter>
 ```
 
@@ -365,7 +367,7 @@ Engine FluentdからHTTP経由でログを受信：
     path_suffix ".log"
     
     # バッファ設定（共通）
-    <buffer safe_customer_name,log_type,safe_fqdn,time>
+    <buffer safe_customer_name,log_type,safe_fqdn>
       @type file
       path /var/log/fluentd/buffer/storage
       
@@ -412,6 +414,27 @@ Engine FluentdからHTTP経由でログを受信：
     </inject>
   </match>
 </label>
+
+# 不正なログ（customer_name/fqdn欠損）を別ファイルに出力（データ損失防止）
+<match invalid.**>
+  @type file
+  @id output_invalid
+  
+  path /var/log/fluentd/invalid/invalid
+  path_suffix ".log"
+  
+  <buffer time>
+    @type file
+    path /var/log/fluentd/buffer/invalid
+    timekey 1h
+    timekey_wait 10s
+    flush_interval 10s
+  </buffer>
+  
+  <format>
+    @type json
+  </format>
+</match>
 
 # 処理できなかったログを別ファイルに出力（デバッグ用）
 <match **>
@@ -461,7 +484,11 @@ Engine側の設計と同じ構造を採用：
 # バッファディレクトリ
 /var/log/fluentd/buffer/
 ├── storage/               # 共通バッファ（チャンクキーでデータを分離）
+├── invalid/              # 不正なログのバッファ
 └── unmatched/            # 処理できなかったログのバッファ
+
+# 不正なログ（調査用）
+/var/log/fluentd/invalid/
 
 # 処理できなかったログ
 /var/log/fluentd/unmatched/
