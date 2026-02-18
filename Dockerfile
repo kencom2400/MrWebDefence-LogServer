@@ -5,15 +5,13 @@ FROM fluent/fluentd:v1.16-debian-1
 # Switch to root for plugin installation
 USER root
 
-# Install gosu for user switching
+# Install gosu and required gems
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gosu \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install required plugins
-RUN gem install \
-    fluent-plugin-rewrite-tag-filter \
-    fluent-plugin-prometheus \
+    && rm -rf /var/lib/apt/lists/* \
+    && gem install \
+        fluent-plugin-rewrite-tag-filter \
+        fluent-plugin-prometheus \
     && gem sources --clear-all
 
 # Create necessary directories
