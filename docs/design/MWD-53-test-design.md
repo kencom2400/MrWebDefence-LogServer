@@ -379,12 +379,18 @@ curl -s -X POST https://localhost:8888/nginx.access \
 
 sleep 15  # バッファフラッシュ待機
 
-# ファイルが正しい場所に保存されているか確認
-if ls /var/log/mrwebdefence/etc_passwd/ 2>/dev/null; then
-  echo "❌ SEC-003: 不合格 (Path Traversalが成功してしまった)"
+# サニタイズ後のディレクトリ名が作成されていないことを確認
+# "../../etc/passwd" は "__.._etc_passwd" にサニタイズされる
+if ls /var/log/mrwebdefence/__.._etc_passwd/ 2>/dev/null; then
+  echo "❌ SEC-003: 不合格 (サニタイズされたパスでPath Traversalが成功)"
   exit 1
+fi
+
+# 不正なログとして invalid ディレクトリに保存されているか確認
+if ls /var/log/fluentd/invalid/ 2>/dev/null | grep -q ".log"; then
+  echo "✅ SEC-003: 合格 (Path Traversalが防止され、invalidに保存された)"
 else
-  echo "✅ SEC-003: 合格 (Path Traversalが防止された)"
+  echo "⚠️ SEC-003: 警告 (invalidディレクトリにログが見つからない)"
 fi
 
 echo "=== セキュリティテスト完了 ==="
@@ -403,7 +409,7 @@ echo "=== E2E統合テスト ==="
 # テスト用の顧客名・FQDN
 CUSTOMER="integration-test"
 FQDN="test.example.com"
-TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
 YEAR=$(date -u +"%Y")
 MONTH=$(date -u +"%m")
 DAY=$(date -u +"%d")
@@ -818,6 +824,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup Test Environment
         run: docker-compose -f docker-compose.test.yml up -d
+      - name: Wait for Fluentd to be healthy
+        run: |
+          for i in {1..30}; do
+            if curl -fs http://localhost:8889/health > /dev/null 2>&1; then
+              echo "Fluentd is up!"
+              exit 0
+            fi
+            echo "Waiting for Fluentd... ($i/30)"
+            sleep 1
+          done
+          echo "Timed out waiting for Fluentd."
+          exit 1
       - name: Run Unit Tests
         run: ./tests/unit/test-http-input.sh
       - name: Teardown
@@ -830,6 +848,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup Test Environment
         run: docker-compose -f docker-compose.test.yml up -d
+      - name: Wait for Fluentd to be healthy
+        run: |
+          for i in {1..30}; do
+            if curl -fs http://localhost:8889/health > /dev/null 2>&1; then
+              echo "Fluentd is up!"
+              exit 0
+            fi
+            echo "Waiting for Fluentd... ($i/30)"
+            sleep 1
+          done
+          echo "Timed out waiting for Fluentd."
+          exit 1
       - name: Run Integration Tests
         run: ./tests/integration/test-e2e-flow.sh
       - name: Teardown
@@ -841,6 +871,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Setup Test Environment
+        run: docker-compose -f docker-compose.test.yml up -d
+      - name: Wait for Fluentd to be healthy
+        run: |
+          for i in {1..30}; do
+            if curl -fs http://localhost:8889/health > /dev/null 2>&1; then
+              echo "Fluentd is up!"
+              exit 0
+            fi
+            echo "Waiting for Fluentd... ($i/30)"
+            sleep 1
+          done
+          echo "Timed out waiting for Fluentd."
+          exit 1
         run: docker-compose -f docker-compose.test.yml up -d
       - name: Run Security Tests
         run: ./tests/security/test-security.sh

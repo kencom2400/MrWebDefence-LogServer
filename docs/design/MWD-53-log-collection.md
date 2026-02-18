@@ -362,7 +362,7 @@ Engine FluentdからHTTP経由でログを受信：
     @id output_file_storage
     
     # 動的なファイルパス: /var/log/mrwebdefence/{customer_name}/{log_type}/{fqdn}/{year}/{month}/{day}/{hour}.log.gz
-    # tag_parts[0] で "nginx" または "openappsec" を取得
+    # filterで追加された ${log_type} を使用
     path /var/log/mrwebdefence/${safe_customer_name}/${log_type}/${safe_fqdn}/%Y/%m/%d/%H
     path_suffix ".log"
     
@@ -513,7 +513,7 @@ Engine側の設計と同じ構造を採用：
 - **分割間隔**: 1時間（`timekey 1h`）
 - **待機時間**: 10秒（`timekey_wait 10s`）
 - **圧縮**: gzip（`compress gzip`）
-- **タイムゾーン**: JST（`timekey_zone "+0900"`）
+- **タイムゾーン**: UTC（`timekey_use_utc true`）
 
 ---
 
