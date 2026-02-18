@@ -8,7 +8,7 @@ set -euo pipefail
 CERT_DIR="${CERT_DIR:-./certs}"
 CA_SUBJECT="/C=JP/ST=Tokyo/L=Tokyo/O=MrWebDefence/OU=IT/CN=MrWebDefence-CA"
 SERVER_SUBJECT="/C=JP/ST=Tokyo/L=Tokyo/O=MrWebDefence/OU=LogServer/CN=logserver-01"
-DAYS=3650
+DAYS="${CERT_VALIDITY_DAYS:-365}"
 
 # 証明書ディレクトリの作成
 echo "Creating certificate directory: ${CERT_DIR}"

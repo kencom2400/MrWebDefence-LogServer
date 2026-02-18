@@ -59,8 +59,9 @@ fi
 # 4. バッファサイズチェック
 echo ""
 echo "4. Buffer status:"
-if curl -sf --max-time "${TIMEOUT}" "${METRICS_ENDPOINT}" > /tmp/metrics.txt 2>&1; then
-  buffer_bytes=$(grep 'fluentd_output_status_buffer_total_bytes' /tmp/metrics.txt | grep -v '#' | awk '{sum+=$2} END {print sum}')
+METRICS_TMPFILE=$(mktemp)
+if curl -sf --max-time "${TIMEOUT}" "${METRICS_ENDPOINT}" > "${METRICS_TMPFILE}" 2>&1; then
+  buffer_bytes=$(grep 'fluentd_output_status_buffer_total_bytes' "${METRICS_TMPFILE}" | grep -v '#' | awk '{sum+=$2} END {print sum}')
   buffer_mb=$((buffer_bytes / 1024 / 1024))
   
   if [[ ${buffer_mb} -lt 1024 ]]; then
@@ -72,7 +73,7 @@ if curl -sf --max-time "${TIMEOUT}" "${METRICS_ENDPOINT}" > /tmp/metrics.txt 2>&
     EXIT_CODE=1
   fi
   
-  rm -f /tmp/metrics.txt
+  rm -f "${METRICS_TMPFILE}"
 else
   echo -e "   ${RED}Unable to fetch metrics${NC}"
   EXIT_CODE=1
@@ -81,14 +82,15 @@ fi
 # 5. ログ出力カウント
 echo ""
 echo "5. Log output stats:"
-if curl -sf --max-time "${TIMEOUT}" "${METRICS_ENDPOINT}" > /tmp/metrics.txt 2>&1; then
-  input_count=$(grep 'fluentd_input_status_num_records_total' /tmp/metrics.txt | grep -v '#' | awk '{sum+=$2} END {print sum}')
-  output_count=$(grep 'fluentd_output_status_num_records_total' /tmp/metrics.txt | grep -v '#' | awk '{sum+=$2} END {print sum}')
+METRICS_TMPFILE=$(mktemp)
+if curl -sf --max-time "${TIMEOUT}" "${METRICS_ENDPOINT}" > "${METRICS_TMPFILE}" 2>&1; then
+  input_count=$(grep 'fluentd_input_status_num_records_total' "${METRICS_TMPFILE}" | grep -v '#' | awk '{sum+=$2} END {print sum}')
+  output_count=$(grep 'fluentd_output_status_num_records_total' "${METRICS_TMPFILE}" | grep -v '#' | awk '{sum+=$2} END {print sum}')
   
   echo "   Input records: ${input_count:-0}"
   echo "   Output records: ${output_count:-0}"
   
-  rm -f /tmp/metrics.txt
+  rm -f "${METRICS_TMPFILE}"
 else
   echo -e "   ${RED}Unable to fetch metrics${NC}"
 fi
