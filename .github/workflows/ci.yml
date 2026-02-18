@@ -96,7 +96,7 @@ jobs:
         with:
           scandir: './scripts'
           severity: warning
-          ignore_paths: 'jira github/pr/comment-pr.sh'
+          ignore_paths: 'jira github'
       
       - name: Run ShellCheck on test scripts
         uses: ludeeus/action-shellcheck@master
