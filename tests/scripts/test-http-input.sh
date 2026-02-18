@@ -30,7 +30,7 @@ rm -f "${CERT_DIR}/logserver.csr"
 
 # テスト環境起動
 echo "Starting test environment..."
-docker compose -f docker compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 
 # Fluentd起動待機
 echo "Waiting for Fluentd to be healthy..."
@@ -41,8 +41,8 @@ for i in {1..30}; do
   fi
   if [ $i -eq 30 ]; then
     echo "Error: Fluentd failed to start"
-    docker compose -f docker compose.test.yml logs fluentd
-    docker compose -f docker compose.test.yml down
+    docker compose -f docker-compose.test.yml logs fluentd
+    docker compose -f docker-compose.test.yml down
     exit 1
   fi
   sleep 1
@@ -114,7 +114,7 @@ fi
 # クリーンアップ
 echo ""
 echo "Cleaning up..."
-docker compose -f docker compose.test.yml down
+docker compose -f docker-compose.test.yml down
 rm -rf ./tests/tmp/*
 
 # 結果
