@@ -12,7 +12,7 @@ RUN gem install \
     && gem sources --clear-all
 
 # Create necessary directories
-RUN mkdir -p /var/log/mrwebdefence \
+RUN mkdir -p /var/log/mrwebdefence/logs \
     && mkdir -p /var/log/fluentd/buffer \
     && mkdir -p /var/log/fluentd/invalid \
     && mkdir -p /var/log/fluentd/unmatched \
