@@ -72,6 +72,12 @@ FLUENTD_LOG_LEVEL=info
 
 # Fluentdワーカー数（デフォルト: 2）
 FLUENTD_WORKERS=2
+
+# モニタリングエンドポイントのバインドアドレス（デフォルト: 127.0.0.1）
+# 127.0.0.1 - ローカルホストのみ（最も安全、推奨）
+# 0.0.0.0 - 全インターフェース公開（VPCやファイアウォールで制御すること）
+# 特定IP - 特定のサブネットIPアドレス（例: 10.0.1.100）
+MONITORING_BIND_ADDR=127.0.0.1
 ```
 
 ### Engine側との連携
@@ -134,8 +140,21 @@ LogServerが正常に起動しているか確認:
 # ヘルスチェックエンドポイント（コンテナ内から）
 docker exec mrwebdefence-logserver curl -f http://localhost:8889/health
 
-# Prometheusメトリクス
+# Prometheusメトリクス（デフォルトではローカルホストのみ）
+# MONITORING_BIND_ADDR=0.0.0.0 の場合に外部からアクセス可能
 curl http://localhost:24231/metrics
+```
+
+**モニタリングエンドポイントの公開範囲について:**
+
+デフォルトでは、モニタリングエンドポイント（24220, 24231）は`127.0.0.1`にバインドされ、コンテナ内からのみアクセス可能です。外部のモニタリングシステム（Prometheus等）から収集する場合は、`.env`で以下のように設定してください:
+
+```bash
+# 特定のサブネットからのみアクセス許可（推奨）
+MONITORING_BIND_ADDR=10.0.1.100  # LogServerのプライベートIP
+
+# またはファイアウォールで制御した上で全公開
+MONITORING_BIND_ADDR=0.0.0.0
 ```
 
 ## 🧪 テスト
