@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  fluentd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mrwebdefence-logserver-test
+    ports:
+      - "8888:8888"    # Log receiver (HTTP, Engine側と同一)
+      - "8889:8889"    # Health check
+      - "24220:24220"  # Monitor agent
+      - "24231:24231"  # Prometheus metrics
+    volumes:
+      # Fluentd設定ファイル
+      - ./config/fluentd:/fluentd/etc:ro
+      # テスト用ログストレージ（logsサブディレクトリにマウント）
+      - ./tests/tmp/logs:/var/log/mrwebdefence/logs
+      # テスト用バッファ
+      - ./tests/tmp/buffer:/var/log/fluentd/buffer
+      # テスト用不正なログ
+      - ./tests/tmp/invalid:/var/log/fluentd/invalid
+      # テスト用処理できなかったログ
+      - ./tests/tmp/unmatched:/var/log/fluentd/unmatched
+    environment:
+      - FLUENTD_LOG_LEVEL=debug
+      - FLUENTD_WORKERS=2
+      - MONITORING_BIND_ADDR=0.0.0.0
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8889/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+networks:
+  test-network:
+    driver: bridge
