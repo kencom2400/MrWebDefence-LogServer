@@ -9,6 +9,9 @@ if [ -f "${SCRIPT_DIR}/config.sh" ]; then
   source "${SCRIPT_DIR}/config.sh"
 fi
 
+# デフォルト値の設定
+: "${JIRA_BASE_URL:=https://kencom2400.atlassian.net}"
+
 # 認証情報の確認
 check_jira_auth() {
   if [ -z "$JIRA_EMAIL" ] || [ -z "$JIRA_API_TOKEN" ]; then
@@ -17,6 +20,17 @@ check_jira_auth() {
     echo "以下のコマンドで設定してください:" >&2
     echo "  export JIRA_EMAIL='your-email@example.com'" >&2
     echo "  export JIRA_API_TOKEN='your-api-token'" >&2
+    echo "" >&2
+    echo "オプション: JIRA_BASE_URL (デフォルト: https://kencom2400.atlassian.net)" >&2
+    echo "  export JIRA_BASE_URL='https://your-instance.atlassian.net'" >&2
+    exit 1
+  fi
+  
+  if [ -z "$JIRA_BASE_URL" ]; then
+    echo "❌ エラー: 環境変数 JIRA_BASE_URL が設定されていません。" >&2
+    echo "" >&2
+    echo "以下のコマンドで設定してください:" >&2
+    echo "  export JIRA_BASE_URL='https://kencom2400.atlassian.net'" >&2
     exit 1
   fi
 }

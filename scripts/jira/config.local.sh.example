@@ -9,6 +9,7 @@
 # 2. config.local.sh に認証情報を設定
 #    JIRA_EMAIL='your-email@example.com'
 #    JIRA_API_TOKEN='your-api-token'
+#    JIRA_BASE_URL='https://kencom2400.atlassian.net'  # オプション（デフォルト値あり）
 #
 # 3. config.local.sh は .gitignore に追加されているため、gitにpushされません
 
@@ -16,6 +17,8 @@
 export JIRA_EMAIL='your-email@example.com'
 export JIRA_API_TOKEN='your-api-token'
 
-# オプション: JiraインスタンスのベースURL（デフォルト値があるため通常は不要）
-# export JIRA_BASE_URL='https://kencom2400.atlassian.net'
+# オプション: JiraインスタンスのベースURL
+# デフォルト値: https://kencom2400.atlassian.net
+# 異なるインスタンスを使用する場合のみ設定してください
+export JIRA_BASE_URL='https://kencom2400.atlassian.net'
 

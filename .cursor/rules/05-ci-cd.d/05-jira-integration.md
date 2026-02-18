@@ -294,7 +294,21 @@ Jira APIを使用するには、以下の環境変数を設定する必要があ
 ```bash
 export JIRA_EMAIL='your-email@example.com'
 export JIRA_API_TOKEN='your-api-token'
+export JIRA_BASE_URL='https://kencom2400.atlassian.net'  # オプション（デフォルト値あり）
 ```
+
+**🔴 重要: JIRA_BASE_URLのデフォルト値**
+
+`JIRA_BASE_URL`環境変数が未設定の場合、デフォルト値として`https://kencom2400.atlassian.net`が使用されます。
+
+- ✅ **推奨**: 環境変数を明示的に設定（特に異なるインスタンスを使用する場合）
+- ✅ **許容**: 環境変数を省略（デフォルト値が使用される）
+- ❌ **禁止**: スクリプト内で`JIRA_BASE_URL`のチェック漏れ
+
+**理由:**
+- 環境変数の設定漏れによるAPI呼び出しエラーを防ぐ
+- 異なるJiraインスタンスへの対応を容易にする
+- デフォルト値により、通常は設定不要
 
 ### 設定ファイルの使用（推奨）
 
@@ -307,6 +321,7 @@ cp scripts/jira/config.local.sh.example scripts/jira/config.local.sh
 # 認証情報を設定
 export JIRA_EMAIL='your-email@example.com'
 export JIRA_API_TOKEN='your-api-token'
+export JIRA_BASE_URL='https://kencom2400.atlassian.net'  # オプション
 ```
 
 **重要**: `config.local.sh` は `.gitignore` に追加されているため、Gitにpushされません。
@@ -368,6 +383,32 @@ source scripts/jira/config.sh
 2. `JIRA_EMAIL` と `JIRA_API_TOKEN` を設定
 3. スクリプトを再実行
 
+### JIRA_BASE_URL未設定エラー
+
+```
+HTTPエラー: 000
+```
+
+**原因:**
+
+`JIRA_BASE_URL`環境変数が未設定で、かつデフォルト値が正しく適用されていない場合に発生します。
+
+**対処方法:**
+
+1. 環境変数を明示的に設定:
+   ```bash
+   export JIRA_BASE_URL='https://kencom2400.atlassian.net'
+   ```
+2. または、`scripts/jira/config.local.sh` に追加:
+   ```bash
+   export JIRA_BASE_URL='https://kencom2400.atlassian.net'
+   ```
+3. スクリプトを再実行
+
+**予防策:**
+
+`scripts/jira/common.sh`では、`JIRA_BASE_URL`のデフォルト値が設定されているため、通常はこのエラーは発生しません。このエラーが発生した場合は、スクリプトのバージョンが古い可能性があります。
+
 ### プロジェクト未検出
 
 ```
@@ -378,7 +419,7 @@ source scripts/jira/config.sh
 
 1. プロジェクトキーが正しいか確認
 2. プロジェクトへのアクセス権限を確認
-3. JiraインスタンスのURLが正しいか確認
+3. JiraインスタンスのURLが正しいか確認（`JIRA_BASE_URL`）
 
 ### Issue種別未検出
 
