@@ -24,6 +24,7 @@ services:
       - unmatched:/var/log/fluentd/unmatched
     environment:
       - FLUENTD_LOG_LEVEL=${FLUENTD_LOG_LEVEL:-info}
+      - FLUENTD_WORKERS=${FLUENTD_WORKERS:-2}
       - MONITORING_BIND_ADDR=${MONITORING_BIND_ADDR:-127.0.0.1}
     restart: unless-stopped
     networks:

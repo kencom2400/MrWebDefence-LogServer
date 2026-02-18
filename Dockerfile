@@ -16,13 +16,11 @@ RUN apt-get update \
 
 # Create necessary directories
 RUN mkdir -p /var/log/mrwebdefence/logs \
-    && mkdir -p /var/log/fluentd/buffer \
-    && mkdir -p /var/log/fluentd/invalid \
-    && mkdir -p /var/log/fluentd/unmatched \
-    && chown -R fluent:fluent /var/log/mrwebdefence \
-    && chown -R fluent:fluent /var/log/fluentd \
-    && chmod -R 755 /var/log/mrwebdefence \
-    && chmod -R 755 /var/log/fluentd
+             /var/log/fluentd/buffer \
+             /var/log/fluentd/invalid \
+             /var/log/fluentd/unmatched \
+    && chown -R fluent:fluent /var/log/mrwebdefence /var/log/fluentd \
+    && chmod -R 755 /var/log/mrwebdefence /var/log/fluentd
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /usr/local/bin/

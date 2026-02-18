@@ -50,3 +50,12 @@ coverage.xml
 # Config
 config/server.local.yaml
 scripts/jira/config.local.sh
+
+# Environment
+.env
+
+# Certificates
+certs/
+
+# Test artifacts
+tests/tmp/

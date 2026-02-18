@@ -24,6 +24,7 @@ services:
       - ./tests/tmp/unmatched:/var/log/fluentd/unmatched
     environment:
       - FLUENTD_LOG_LEVEL=debug
+      - FLUENTD_WORKERS=2
       - MONITORING_BIND_ADDR=0.0.0.0
     networks:
       - test-network
