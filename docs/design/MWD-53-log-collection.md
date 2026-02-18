@@ -596,20 +596,27 @@ safe_fqdn ${(record["fqdn"] || "unknown").gsub(/[^a-zA-Z0-9._-]/, '_')}
 不正なログを除外：
 
 ```xml
+# 不正なログを別ストリームにルーティング（データ損失防止）
+# フィルタ設定（02-filter.conf）で定義済み
 <filter **>
-  @type grep
-  @id filter_exclude_invalid
+  @type rewrite_tag_filter
+  @id filter_rewrite_invalid_logs
   
-  <exclude>
+  <rule>
     key customer_name
     pattern /^unknown$/
-  </exclude>
+    tag invalid.${tag}
+  </rule>
   
-  <exclude>
+  <rule>
     key fqdn
     pattern /^unknown$/
-  </exclude>
+    tag invalid.${tag}
+  </rule>
 </filter>
+
+# 不正なログは /var/log/fluentd/invalid/ に保存され、
+# データ損失を防ぎつつ調査が可能
 ```
 
 ---
@@ -638,12 +645,24 @@ DELETE_DAYS=90
 # 30日以上前のログをS3にアーカイブ（オプション）
 if command -v aws &> /dev/null; then
   echo "Archiving logs older than ${ARCHIVE_DAYS} days to S3..."
+  ARCHIVE_FAILED=0
   find "${LOG_BASE_DIR}" -name "*.log.gz" -mtime +${ARCHIVE_DAYS} -type f -print0 | \
     while IFS= read -r -d '' file; do
       relative_path="${file#${LOG_BASE_DIR}/}"
-      aws s3 cp "${file}" "s3://mrwebdefence-logs-archive/${relative_path}" && \
-        echo "Archived: ${file}"
+      if aws s3 cp "${file}" "s3://mrwebdefence-logs-archive/${relative_path}"; then
+        echo "✅ Archived: ${file}"
+      else
+        echo "❌ Failed to archive: ${file}" >&2
+        ARCHIVE_FAILED=$((ARCHIVE_FAILED + 1))
+      fi
     done
+  
+  if [ $ARCHIVE_FAILED -gt 0 ]; then
+    echo "⚠️ ${ARCHIVE_FAILED} file(s) failed to archive" >&2
+    # アーカイブ失敗時は削除処理をスキップ
+    echo "Skipping deletion due to archive failures"
+    exit 1
+  fi
 fi
 
 # 90日以上前のログを削除
