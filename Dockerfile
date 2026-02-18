@@ -19,7 +19,9 @@ RUN mkdir -p /var/log/mrwebdefence \
     && mkdir -p /etc/fluentd/certs \
     && chown -R fluent:fluent /var/log/mrwebdefence \
     && chown -R fluent:fluent /var/log/fluentd \
-    && chown -R fluent:fluent /etc/fluentd/certs
+    && chown -R fluent:fluent /etc/fluentd/certs \
+    && chmod -R 755 /var/log/mrwebdefence \
+    && chmod -R 755 /var/log/fluentd
 
 # Switch back to fluent user
 USER fluent
