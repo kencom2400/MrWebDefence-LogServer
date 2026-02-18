@@ -94,7 +94,7 @@ fi
 echo ""
 echo "Cleaning up..."
 docker compose -f docker-compose.test.yml down
-rm -rf ./tests/tmp/*
+sudo rm -rf ./tests/tmp/* 2>/dev/null || true
 
 # 結果
 echo ""

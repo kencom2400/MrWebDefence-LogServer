@@ -102,7 +102,8 @@ fi
 echo ""
 echo "Cleaning up..."
 docker compose -f docker-compose.test.yml down
-rm -rf ./tests/tmp/*
+# tests/tmp内のファイルはfluentdユーザーが所有しているため、sudoで削除
+sudo rm -rf ./tests/tmp/* 2>/dev/null || true
 
 # 結果
 echo ""

@@ -42,6 +42,6 @@ fi
 
 # クリーンアップ
 docker compose -f docker-compose.test.yml down
-rm -rf ./tests/tmp/*
+sudo rm -rf ./tests/tmp/* 2>/dev/null || true
 
 exit $RESULT
