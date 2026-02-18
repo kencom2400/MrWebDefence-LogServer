@@ -261,7 +261,7 @@ Engine FluentdからHTTP経由でログを受信：
   bind 127.0.0.1
   
   <parse>
-    @type json
+    @type none
   </parse>
 </source>
 ```
@@ -367,7 +367,7 @@ Engine FluentdからHTTP経由でログを受信：
     # バッファ設定（共通）
     <buffer safe_customer_name,log_type,safe_fqdn,time>
       @type file
-      path /var/log/fluentd/buffer/${log_type}
+      path /var/log/fluentd/buffer/storage
       
       # 時間ベースのチャンキング（1時間ごと）
       timekey 1h
@@ -408,7 +408,7 @@ Engine FluentdからHTTP経由でログを受信：
       time_key timestamp
       time_type string
       time_format %Y-%m-%dT%H:%M:%S.%LZ
-      timezone +0900
+      timezone UTC
     </inject>
   </match>
 </label>
@@ -460,9 +460,8 @@ Engine側の設計と同じ構造を採用：
 
 # バッファディレクトリ
 /var/log/fluentd/buffer/
-├── nginx/
-├── openappsec/
-└── unmatched/
+├── storage/               # 共通バッファ（チャンクキーでデータを分離）
+└── unmatched/            # 処理できなかったログのバッファ
 
 # 処理できなかったログ
 /var/log/fluentd/unmatched/
@@ -501,8 +500,8 @@ Engine Fluentd ↔ LogServer Fluentd間の通信を相互TLS（mTLS）で暗号�
 <source>
   @type http
   <transport tls>
-    version TLSv1_2
-    ciphers ALL:!aNULL:!eNULL:!SSLv2
+    version TLSv1_3,TLSv1_2
+    ciphers ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256
     
     # サーバー証明書
     cert_path /etc/fluentd/certs/logserver.crt
