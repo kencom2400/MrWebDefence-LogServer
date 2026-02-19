@@ -24,6 +24,10 @@ MrWebDefence-Engine（WAFエンジン）から転送されるログを受信し�
 - **ログ正規化**: メタデータ追加・Path Traversal対策 ✅
 - **バッファリング**: 時間ベース・サイズベースのチャンキング（DoS対策付き）✅
 - **ファイルストレージ**: gzip圧縮・時間別自動ローテーション ✅
+  - **顧客別・FQDN別・時間別のディレクトリ構造** ✅
+  - **ログ保持期間管理（1年）** ✅
+  - **自動削除機能（cron設定）** ✅
+  - **S3保存機能（オプション）** ✅
 - **モニタリング**: Prometheusメトリクス・ヘルスチェックエンドポイント ✅
 
 ### システムアーキテクチャ
@@ -199,11 +203,14 @@ curl -X POST http://localhost:8888/openappsec.security \
 ### ログファイルの確認
 
 ```bash
-# ログファイルの場所を確認
-docker exec mrwebdefence-logserver find /var/log/mrwebdefence/logs -name "*.log.gz"
+# 顧客別のログファイル一覧を確認
+docker exec mrwebdefence-logserver find /var/log/mrwebdefence -name "*.log.gz" | head -20
 
-# ログ内容を確認
-docker exec mrwebdefence-logserver zcat /var/log/mrwebdefence/logs/access.YYYYMMDDHH_0.log.gz | jq .
+# 特定顧客・FQDN・日付のログを確認
+docker exec mrwebdefence-logserver ls -lh /var/log/mrwebdefence/customer-name/nginx/example.com/2026/02/19/
+
+# ログ内容を確認（gzip圧縮されたJSON Linesを展開）
+docker exec mrwebdefence-logserver zcat /var/log/mrwebdefence/customer-name/nginx/example.com/2026/02/19/10.log.gz | jq .
 ```
 
 ### CIでのテスト実行
@@ -222,12 +229,18 @@ GitHub Actionsで自動的にテストが実行されます:
 ```
 MrWebDefence-LogServer/
 ├── config/
-│   └── fluentd/
-│       ├── fluent.conf              # メイン設定
-│       └── conf.d/
-│           ├── 01-source.conf       # 入力設定（HTTP受信）
-│           ├── 02-filter.conf       # フィルタ設定（正規化）
-│           └── 03-output.conf       # 出力設定（ファイル保存）
+│   ├── fluentd/
+│   │   ├── fluent.conf              # メイン設定
+│   │   └── conf.d/
+│   │       ├── 01-source.conf       # 入力設定（HTTP受信）
+│   │       ├── 02-filter.conf       # フィルタ設定（正規化）
+│   │       ├── 03-output.conf       # 出力設定（ファイル保存）
+│   │       └── 04-output-s3.conf    # S3出力設定（オプション）
+│   └── cron/
+│       └── log-cleanup.cron         # ログ自動削除設定
+├── scripts/
+│   ├── archive-logs.sh              # ログアーカイブ・削除スクリプト
+│   └── healthcheck.sh               # ヘルスチェックスクリプト
 ├── tests/
 │   └── scripts/
 │       ├── test-config.sh           # 設定検証
@@ -253,7 +266,53 @@ MrWebDefence-LogServer/
 
 ### ログ出力先
 
-- **正常ログ**: `/var/log/mrwebdefence/logs/access.YYYYMMDDHH_N.log.gz`
+#### ディレクトリ構造
+
+ログは顧客別・ログタイプ別・FQDN別・時間別のディレクトリ構造で保存されます：
+
+```
+/var/log/mrwebdefence/
+├── {customer_name}/              # 顧客名（サニタイズ済み）
+│   ├── nginx/                    # ログタイプ
+│   │   └── {fqdn}/              # FQDN（サニタイズ済み）
+│   │       └── 2026/            # 年
+│   │           └── 02/          # 月
+│   │               └── 19/      # 日
+│   │                   ├── 00.log.gz  # 時間（00-23）
+│   │                   ├── 01.log.gz
+│   │                   └── ...
+│   └── openappsec/
+│       └── {fqdn}/
+│           └── ...
+```
+
+#### ログ保持期間
+
+- **ローカルストレージ**: 1年（365日）保持後、自動削除
+- **S3アーカイブ（オプション）**: 30日経過後、S3 Glacierにアーカイブ
+- **自動削除**: 毎日午前3時にcronで実行（`config/cron/log-cleanup.cron`）
+
+#### S3保存（オプション）
+
+S3への保存を有効にする場合は、以下の設定を行います：
+
+1. `fluent.conf`に以下を追加：
+   ```
+   @include conf.d/04-output-s3.conf
+   ```
+
+2. 環境変数を設定：
+   ```bash
+   AWS_ACCESS_KEY_ID=your-access-key
+   AWS_SECRET_ACCESS_KEY=your-secret-key
+   AWS_REGION=ap-northeast-1
+   S3_BUCKET_NAME=mrwebdefence-logs
+   ```
+
+3. Dockerコンテナを再起動
+
+#### 不正ログ・処理不能ログ
+
 - **処理不能ログ**: `/var/log/fluentd/unmatched/unmatched.YYYYMMDDHH_0.log`
 
 ### バッファ

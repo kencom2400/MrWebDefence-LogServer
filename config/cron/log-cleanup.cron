@@ -1,0 +1,11 @@
+# ログ自動削除・アーカイブのcron設定
+# MrWebDefence-LogServer
+
+# 毎日午前3時にログアーカイブ・削除を実行
+0 3 * * * /opt/mrwebdefence/scripts/archive-logs.sh >> /var/log/mrwebdefence/archive.log 2>&1
+
+# 説明:
+# - 毎日午前3時（負荷の低い時間帯）に実行
+# - 30日以上経過したログをS3にアーカイブ（Glacier）
+# - 365日（1年）以上経過したログをローカルから削除
+# - 実行ログは /var/log/mrwebdefence/archive.log に出力
