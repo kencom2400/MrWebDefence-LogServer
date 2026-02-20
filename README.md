@@ -286,6 +286,11 @@ MrWebDefence-LogServer/
 │           └── ...
 ```
 
+**セキュリティ対策**:
+- `customer_name` と `fqdn` は自動的にサニタイズされ、安全な文字（`a-zA-Z0-9._-`）のみが許可されます
+- Path Traversal攻撃（`../` など）は自動的に防止されます
+- サニタイズ処理は `config/fluentd/conf.d/02-filter.conf` で実施されます
+
 #### ログ保持期間
 
 - **ローカルストレージ**: 1年（365日）保持後、自動削除

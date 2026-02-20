@@ -21,8 +21,9 @@
     s3_region "#{ENV['AWS_REGION']}"
     
     # S3パス: 顧客別・ログタイプ別・FQDN別・時間別
-    # パターン: logs/{customer_name}/{log_type}/{fqdn}/{year}/{month}/{day}/{hour}.log.gz
-    path logs/${customer_name}/${log_type}/${fqdn}/%Y/%m/%d/%H
+    # パターン: logs/{safe_customer_name}/{log_type}/{safe_fqdn}/{year}/{month}/{day}/{hour}.log.gz
+    # 注意: safe_customer_name と safe_fqdn はサニタイズ済み（Path Traversal対策）
+    path logs/${safe_customer_name}/${log_type}/${safe_fqdn}/%Y/%m/%d/%H
     s3_object_key_format "%{path}_%{index}.%{file_extension}"
     
     # ファイル設定
@@ -34,7 +35,8 @@
     store_as gzip
     
     # バッファ設定: 時間・顧客・ログタイプ・FQDNごとにチャンキング
-    <buffer time,customer_name,log_type,fqdn>
+    # 注意: safe_customer_name と safe_fqdn を使用してPath Traversal対策
+    <buffer time,safe_customer_name,log_type,safe_fqdn>
       @type file
       path /var/log/fluentd/buffer/s3
       
