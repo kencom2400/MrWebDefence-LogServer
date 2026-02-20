@@ -9,7 +9,7 @@ LOG_BASE_DIR="${LOG_BASE_DIR:-/var/log/mrwebdefence}"
 S3_BUCKET="${S3_BUCKET:-mrwebdefence-logs}"
 S3_PREFIX="${S3_PREFIX:-archive}"
 ARCHIVE_DAYS="${ARCHIVE_DAYS:-30}"
-DELETE_DAYS="${DELETE_DAYS:-90}"
+DELETE_DAYS="${DELETE_DAYS:-365}"  # 1年（365日）後に削除
 
 # AWS CLI確認
 if ! command -v aws &> /dev/null; then
