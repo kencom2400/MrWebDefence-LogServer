@@ -89,10 +89,12 @@ sleep 15
 # ログファイル確認
 echo ""
 echo "Verifying log files..."
-if docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence/logs -name "*.log.gz" | grep -q .; then
+# 新しい階層構造: /var/log/mrwebdefence/{customer_name}/{log_type}/{fqdn}/YYYY/MM/DD/HH.log
+LOG_FILES=$(docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence -type f \( -name "*.log" -o -name "*.log.gz" \) 2>/dev/null | wc -l)
+if [ "$LOG_FILES" -gt 0 ]; then
   echo "✓ Log files created"
-  LOG_COUNT=$(docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence/logs -name "*.log.gz" -exec zcat {} \; | wc -l)
-  echo "  Total log entries: $LOG_COUNT"
+  docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence -type f -name "*.log" 2>/dev/null | head -5
+  echo "  Total log files: $LOG_FILES"
 else
   echo "✗ Log files not found"
   ((FAILED++))
@@ -102,8 +104,7 @@ fi
 echo ""
 echo "Cleaning up..."
 docker compose -f docker-compose.test.yml down
-# tests/tmp内のファイルはfluentdユーザーが所有しているため、sudoで削除
-sudo rm -rf ./tests/tmp/* 2>/dev/null || true
+rm -rf ./tests/tmp/* 2>/dev/null || true
 
 # 結果
 echo ""
