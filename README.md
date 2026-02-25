@@ -207,10 +207,10 @@ curl -X POST http://localhost:8888/openappsec.security \
 docker exec mrwebdefence-logserver find /var/log/mrwebdefence -name "*.log.gz" | head -20
 
 # 特定顧客・FQDN・日付のログを確認
-docker exec mrwebdefence-logserver ls -lh /var/log/mrwebdefence/customer-name/nginx/example.com/2026/02/19/
+docker exec mrwebdefence-logserver ls -lh /var/log/mrwebdefence/{customer-name}/nginx/{fqdn}/YYYY/MM/DD/
 
 # ログ内容を確認（gzip圧縮されたJSON Linesを展開）
-docker exec mrwebdefence-logserver zcat /var/log/mrwebdefence/customer-name/nginx/example.com/2026/02/19/10.log.gz | jq .
+docker exec mrwebdefence-logserver zcat /var/log/mrwebdefence/{customer-name}/nginx/{fqdn}/YYYY/MM/DD/HH.log.gz | jq .
 ```
 
 ### CIでのテスト実行
@@ -238,6 +238,8 @@ MrWebDefence-LogServer/
 │   │       └── 04-output-s3.conf    # S3出力設定（オプション）
 │   └── cron/
 │       └── log-cleanup.cron         # ログ自動削除設定
+│   └── logrotate/
+│       └── mrwebdefence-archive     # archive.logローテーション設定
 ├── scripts/
 │   ├── archive-logs.sh              # ログアーカイブ・削除スクリプト
 │   └── healthcheck.sh               # ヘルスチェックスクリプト
@@ -296,6 +298,29 @@ MrWebDefence-LogServer/
 - **ローカルストレージ**: 1年（365日）保持後、自動削除
 - **S3アーカイブ（オプション）**: 30日経過後、S3 Glacierにアーカイブ
 - **自動削除**: 毎日午前3時にcronで実行（`config/cron/log-cleanup.cron`）
+
+#### ログローテーション
+
+**アーカイブログ（archive.log）のローテーション**:
+
+```bash
+# logrotate設定をインストール
+sudo cp config/logrotate/mrwebdefence-archive /etc/logrotate.d/
+
+# 設定の確認
+sudo logrotate -d /etc/logrotate.d/mrwebdefence-archive
+
+# 手動実行（テスト）
+sudo logrotate -f /etc/logrotate.d/mrwebdefence-archive
+```
+
+**ローテーション設定**:
+- 日次ローテーション（daily）
+- 30日分保持
+- gzip圧縮
+- 日付サフィックス付き（例: `archive.log-20260225`）
+
+これにより、`/var/log/mrwebdefence/archive.log`が無限に増大するのを防ぎます。
 
 #### S3保存（オプション）
 

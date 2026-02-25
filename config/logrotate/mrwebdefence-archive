@@ -1,0 +1,35 @@
+# ログアーカイブログのローテーション設定
+# /etc/logrotate.d/mrwebdefence-archive
+
+/var/log/mrwebdefence/archive.log {
+    # 日次ローテーション
+    daily
+    
+    # 30日分保持
+    rotate 30
+    
+    # ファイルが空でもローテーション
+    ifempty
+    
+    # 欠落していてもエラーにしない
+    missingok
+    
+    # 古いログをgzip圧縮
+    compress
+    
+    # 最新のログは圧縮しない（追記中のため）
+    delaycompress
+    
+    # ローテーション後に新しいファイルを作成
+    create 0644 root root
+    
+    # 日付サフィックスを追加（例: archive.log-20260225）
+    dateext
+    dateformat -%Y%m%d
+    
+    # ローテーション後のスクリプト
+    postrotate
+        # 必要に応じてcronジョブに通知
+        # systemctl reload rsyslog > /dev/null 2>&1 || true
+    endscript
+}
