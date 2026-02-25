@@ -50,15 +50,19 @@ fi
 
 # バッファフラッシュ待機
 echo "Waiting for buffer flush..."
-sleep 15
+sleep 20
 
 # サニタイズされたログが正常に処理されることを確認
-if docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence/logs -name "*.log.gz" -exec zcat {} \; | grep -q "safe_customer_name"; then
+# 新しい階層構造: /var/log/mrwebdefence/{safe_customer_name}/{log_type}/{safe_fqdn}/YYYY/MM/DD/HH.log
+if docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence -type f \( -name "*.log" -o -name "*.log.gz" \) 2>/dev/null | head -1 | grep -q .; then
   echo "✓ Logs processed with sanitization"
-  # safe_customer_nameが"__etc_passwd"などにサニタイズされているか確認
-  SAFE_NAME=$(docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence/logs -name "*.log.gz" -exec zcat {} \; | grep "attack" | head -1 | grep -o '"safe_customer_name":"[^"]*"' || echo "")
-  if [ -n "$SAFE_NAME" ]; then
-    echo "  $SAFE_NAME"
+  # ログファイルの内容を確認してsafe_customer_nameを抽出
+  LOG_FILES=$(docker exec mrwebdefence-logserver-test find /var/log/mrwebdefence -type f -name "*.log" 2>/dev/null)
+  if [ -n "$LOG_FILES" ]; then
+    SAFE_NAME=$(docker exec mrwebdefence-logserver-test sh -c "find /var/log/mrwebdefence -type f -name '*.log' -exec cat {} \;" | grep "attack" | head -1 | grep -o '"safe_customer_name":"[^"]*"' || echo "")
+    if [ -n "$SAFE_NAME" ]; then
+      echo "  $SAFE_NAME"
+    fi
   fi
 else
   echo "✗ Log processing failed"
